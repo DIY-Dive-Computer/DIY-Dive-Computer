@@ -1,4 +1,4 @@
-******************************************************************
+/******************************************************************
  This is the Arduino Micro code for the DIY Dive Computer. 
  
  Written by Victor Konshin.
