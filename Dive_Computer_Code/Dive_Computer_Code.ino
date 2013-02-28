@@ -1,3 +1,12 @@
+******************************************************************
+ This is the Arduino Micro code for the DIY Dive Computer. 
+ 
+ Written by Victor Konshin.
+ BSD license, check license.txt for more information.
+ All text above must be included in any redistribution.
+ ******************************************************************/
+
+
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
