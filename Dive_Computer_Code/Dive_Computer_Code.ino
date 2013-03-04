@@ -6,58 +6,89 @@
  * All text above must be included in any redistribution.
  ******************************************************************/
 
-
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
+#include <SD.h>
 #include "RTClib.h"
 
-#define OLED_RESET 4
+#define OLED_RESET 3 // OLED Reset pin
 #define HEADER_DATA_GAP 9
 //#define SHOW_LAYOUT
 
-Adafruit_SSD1306 display(OLED_RESET);
-RTC_DS1307 RTC;
-unsigned long divestart = 0;
-int diveTime = 0;
-byte depth = 0;
-byte maxDepth = 0;
-byte nitrogen = 0;
-byte oxygen = 10;
-byte secondStore = 0;
-byte batteryLevel = 255;
+Adafruit_SSD1306 display(OLED_RESET); // Allocate for the OLED
 
-boolean clockBlink = false;
+uint32_t diveStart = 0; // This stores the dive start time in unixtime.
+int diveTime = 0;// This stores the current dive time in seconds
+// Dive parameter storage
+int depth = 0;
+int maxDepth = 0;
+int nitrogen = 0;
+int oxygen = 10;
+
+uint32_t lastDataRecord = 0; // Stores the last time data was recorded in unixtime.
+uint32_t lastColonStateChange = 0; // Stores the last time the clock was updates to that the blink will happen at 1Hz.
+
+DateTime now; // Stores the current date/time for use throughout the code.
+const int chipSelect = 4; // For the SD card breakout board
+
+// These will be user preferences
 boolean time12Hour = true;
-boolean batteryBlink = false;
-boolean nitrogenBlink = false;
-boolean oxygenBlink = false;
+boolean clockBlink = true;
+int recordInterval = 29; // This is the inteval in which it will record data to the SD card minus one.
+
+// *******************************************************************
+// ***************************** Setup *******************************
+// *******************************************************************
 
 void setup()   {                
-  Serial.begin(57600);
+  Serial.begin(9600);
   Wire.begin();
-  RTC.begin();
 
-  if (! RTC.isrunning()) {
-    Serial.println("RTC is NOT running!");
-    // following line sets the RTC to the date & time this sketch was compiled
-    RTC.adjust(DateTime(__DATE__, __TIME__));
+  // Make sure the real time clock is set
+  Teensy3Clock.set(DateTime(__DATE__, __TIME__).unixtime());
+
+  // initialize access to the SD card
+  Serial.print("Initializing SD card...");
+  // make sure that the default chip select pin is set to
+  // output, even if you don't use it:
+  pinMode(10, OUTPUT);
+
+  // see if the card is present and can be initialized:
+  if (!SD.begin(chipSelect)) {
+    Serial.println("Card failed, or not present");
+    // don't do anything more:
+    return;
   }
-  DateTime now = RTC.now();
-  divestart = now.unixtime();
+  Serial.println("card initialized.");
 
+  now = Teensy3Clock.get();
+  lastDataRecord = Teensy3Clock.get();
+  lastColonStateChange = lastDataRecord;
+
+  diveStart = now.unixtime();
+
+  // Display Setup
   display.begin(SSD1306_SWITCHCAPVCC, 0x3D);  // initialize with the I2C addr 0x3D
   display.clearDisplay();
   display.setTextColor(WHITE);
 
+  // Give everything a half sec to settle
   delay(500);
+
+
 }
+
+// *******************************************************************
+// **************************** Main Loop ****************************
+// *******************************************************************
 
 
 void loop() {
-  DateTime now = RTC.now();
+  now = DateTime(Teensy3Clock.get());
+  diveTime = now.unixtime() - diveStart;
 
-  diveTime = now.unixtime() - divestart;
+  //  ************* Display code *************
 
   display.clearDisplay();
 
@@ -69,76 +100,84 @@ void loop() {
   //drawClock( 0, 0, 2, true);
   drawDiveTime(diveTime, 61, 0, 2, false); // Parameters: Time in seconds, x, y, size, bold
   drawClock(61, 25, 1, false); // Parameters: x, y, size, bold
-  drawDepth( maxDepth, 14, 32, 2, true, "Max:"); // Parameters: depth, x, y, size, bold, header string
-  drawDepth( depth, 4, 0, 3, true, "Depth:"); // Parameters: depth, x, y, size, bold, header string
+  drawDepth( maxDepth, 6, 32, 3, false, "Max:"); // Parameters: depth, x, y, size, bold, header string
+  drawDepth( depth, 6, 0, 3, false, "Depth:"); // Parameters: depth, x, y, size, bold, header string
   drawSaturation(nitrogen, true);
   drawSaturation(oxygen, false);
-  drawBatteryIndicator(batteryLevel, 80, 50);
+
   nitrogen++;
   oxygen++;
-  batteryLevel--;
+
+
   display.display();
 
-}
+  //  ************* Data logging code *************
 
-void drawBatteryIndicator(byte value, byte x, byte y) {
+  if ( now.unixtime() > (lastDataRecord + recordInterval) ) {
 
-  float level = ( 15.0 / 255.0 ) * value;
+    lastDataRecord = now.unixtime();
+    // make a string of data to log:
+    String dataString = generateRecordDataString();
 
-  if (value < 85) {
-    if (batteryBlink) {
-      batteryBlink = !batteryBlink;
-      return;
-    }
-    batteryBlink = !batteryBlink;
+    // open the file. note that only one file can be open at a time,
+    // so you have to close this one before opening another.
+    File dataFile = SD.open("datalog.txt", FILE_WRITE);
+
+    // if the file is available, write to it:
+    if (dataFile) {
+      dataFile.println(dataString);
+      dataFile.close();
+      // print to the serial port too:
+      //Serial.println(dataString);
+    }  
+    else {
+      Serial.println("error opening datalog.txt");
+    } 
   }
 
-  display.drawRect(x, y, 15, 7, WHITE);
-  display.fillRect(x, y, level, 7, WHITE);
-  // the battery nub
-  display.drawLine(x + 15, y + 2, x + 15, y + 4, WHITE);
-  //display.drawLine(101, 59, 101, 61, WHITE);
 }
 
-void drawSaturation(byte value, boolean nitrogen) {
+// *******************************************************************
+// ********************** Generate Record Data ***********************
+// *******************************************************************
+
+String generateRecordDataString() {
+
+  String returnString = "";
+
+  return returnString;  
+}
+
+// *******************************************************************
+// ************************ Draw Saturation **************************
+// *******************************************************************
+
+void drawSaturation(int value, boolean nitrogen) {
 
   float level = ( 53.0 / 255.0 ) * value;
-  Serial.println(level);
 
   display.setTextSize(1);
-  byte x = 0;
-
-  if (value > 170) {
-    if (nitrogen) {
-      if (nitrogenBlink) {
-        nitrogenBlink = !nitrogenBlink;
-        return;
-      }
-      nitrogenBlink = !nitrogenBlink;
-    } 
-    else {
-      if (oxygenBlink) {
-        oxygenBlink = !oxygenBlink;
-        return;
-      }
-      oxygenBlink = !oxygenBlink;
-    }
-  }
-
+  int x = 0;
   if (nitrogen) {
     display.setCursor(0,54);
+
     display.println("N");
   } 
   else {
     display.setCursor(122,54);
+
     display.println("O");
     x = 122;
   }
   display.fillRect(x, 53 - level, 5, level, WHITE);
 }
 
+// *******************************************************************
+// ************************* Draw Dive Time **************************
+// *******************************************************************
+
 // Good up to 99 min and 99 sec. Font sizes 1-4 are valid
-void drawDiveTime(unsigned long seconds, byte x, byte y, byte size, boolean bold) {
+void drawDiveTime(unsigned long seconds, int x, int y, int size, boolean bold) {
 
   String timeString = secondsToString( seconds );
 
@@ -175,13 +214,15 @@ void drawDiveTime(unsigned long seconds, byte x, byte y, byte size, boolean bold
 #endif
 }
 
-void drawClock(byte x, byte y, byte size, boolean bold) {
+// *******************************************************************
+// *************************** Draw Clock ****************************
+// *******************************************************************
+
+void drawClock(int x, int y, int size, boolean bold) {
 
   String timeString;
 
-  DateTime now = RTC.now();  
   int hour = now.hour();
-  int seconds = now.second();
 
   if (time12Hour) {
     if (now.hour() > 12) {
@@ -197,6 +238,11 @@ void drawClock(byte x, byte y, byte size, boolean bold) {
     timeString = String( hour );
   }
 
+  if (now.unixtime() > lastColonStateChange) {
+    lastColonStateChange = now.unixtime();
+    clockBlink = !clockBlink;
+  }
+
   if (clockBlink) {
     timeString = String( timeString + ':' );
   } 
@@ -204,18 +250,14 @@ void drawClock(byte x, byte y, byte size, boolean bold) {
     timeString = String( timeString + ' ' );
   }
 
-  if (secondStore != seconds) {
-    secondStore = seconds;
-    clockBlink = !clockBlink;
 
-  }
+  int minutes = now.minute();
 
-
-  if (now.minute() < 10) {
+  if (minutes < 10) {
     timeString = String( timeString + '0' );
   }
 
-  timeString = String( timeString + now.minute() );
+  timeString = String( timeString + minutes );
 
   int width = ( ( 6 * timeString.length()) * size) - size;
   int height = (7 * size) + HEADER_DATA_GAP;
@@ -251,9 +293,13 @@ void drawClock(byte x, byte y, byte size, boolean bold) {
 #endif
 }
 
+// *******************************************************************
+// *************************** Draw Depth ****************************
+// *******************************************************************
+
 
 // Good up to three digits. Sizes 1-4 are valid
-void drawDepth(byte value, byte x, byte y, byte size, boolean bold, String header) {
+void drawDepth(int value, int x, int y, int size, boolean bold, String header) {
 
   int headerLength = header.length();
   int headerWidth = ( 6 * headerLength);
@@ -291,6 +337,27 @@ void drawDepth(byte value, byte x, byte y, byte size, boolean bold, String heade
 #endif
 }
 
+// *******************************************************************
+// ************************ Draw Accent Rate *************************
+// *******************************************************************
+
+void drawAccentRate(void) {
+  uint8_t color = WHITE;
+  for (int16_t i=min(display.width(),display.height())/2; i>0; i-=5) {
+    display.fillTriangle(display.width()/2, display.height()/2-i,
+                     display.width()/2-i, display.height()/2+i,
+                     display.width()/2+i, display.height()/2+i, WHITE);
+    if (color == WHITE) color = BLACK;
+    else color = WHITE;
+    display.display();
+  }
+}
+
+
+// *******************************************************************
+// ************************* Utility Methods *************************
+// *******************************************************************
+
 String secondsToString( unsigned long diveSeconds) {
 
   int minutes = diveSeconds / 60;
@@ -322,32 +389,3 @@ String secondsToString( unsigned long diveSeconds) {
 
   return timeString;
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
