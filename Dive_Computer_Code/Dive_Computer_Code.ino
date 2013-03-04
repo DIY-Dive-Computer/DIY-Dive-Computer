@@ -1,9 +1,9 @@
 /******************************************************************
- This is the Arduino Micro code for the DIY Dive Computer. 
- 
- Written by Victor Konshin.
- BSD license, check license.txt for more information.
- All text above must be included in any redistribution.
+ * This is the Arduino Micro code for the DIY Dive Computer. 
+ * 
+ * Written by Victor Konshin.
+ * BSD license, check license.txt for more information.
+ * All text above must be included in any redistribution.
  ******************************************************************/
 
 
@@ -24,9 +24,14 @@ byte depth = 0;
 byte maxDepth = 0;
 byte nitrogen = 0;
 byte oxygen = 10;
+byte secondStore = 0;
+byte batteryLevel = 255;
 
+boolean clockBlink = false;
 boolean time12Hour = true;
-boolean clockBlink = true;
+boolean batteryBlink = false;
+boolean nitrogenBlink = false;
+boolean oxygenBlink = false;
 
 void setup()   {                
   Serial.begin(57600);
@@ -53,28 +58,46 @@ void loop() {
   DateTime now = RTC.now();
 
   diveTime = now.unixtime() - divestart;
-  
+
   display.clearDisplay();
 
- depth = analogRead(A0) / 4;
+  depth = analogRead(A0) / 4;
 
-if (depth > maxDepth) maxDepth = depth;
+  if (depth > maxDepth) maxDepth = depth;
 
   //drawDepth( 0, 32, 3, false );
   //drawClock( 0, 0, 2, true);
-  drawDiveTime(diveTime, 61, 0, 2, true); // Parameters: Time in seconds, x, y, size, bold
-  drawClock(61, 25, 1, true); // Parameters: x, y, size, bold
-  drawDepth( maxDepth, 4, 32, 3, true, "Max:"); // Parameters: depth, x, y, size, bold, header string
+  drawDiveTime(diveTime, 61, 0, 2, false); // Parameters: Time in seconds, x, y, size, bold
+  drawClock(61, 25, 1, false); // Parameters: x, y, size, bold
+  drawDepth( maxDepth, 14, 32, 2, true, "Max:"); // Parameters: depth, x, y, size, bold, header string
   drawDepth( depth, 4, 0, 3, true, "Depth:"); // Parameters: depth, x, y, size, bold, header string
   drawSaturation(nitrogen, true);
   drawSaturation(oxygen, false);
-
+  drawBatteryIndicator(batteryLevel, 80, 50);
   nitrogen++;
   oxygen++;
-  delay(1000);
-
+  batteryLevel--;
   display.display();
 
+}
+
+void drawBatteryIndicator(byte value, byte x, byte y) {
+
+  float level = ( 15.0 / 255.0 ) * value;
+
+  if (value < 85) {
+    if (batteryBlink) {
+      batteryBlink = !batteryBlink;
+      return;
+    }
+    batteryBlink = !batteryBlink;
+  }
+
+  display.drawRect(x, y, 15, 7, WHITE);
+  display.fillRect(x, y, level, 7, WHITE);
+  // the battery nub
+  display.drawLine(x + 15, y + 2, x + 15, y + 4, WHITE);
+  //display.drawLine(101, 59, 101, 61, WHITE);
 }
 
 void drawSaturation(byte value, boolean nitrogen) {
@@ -84,14 +107,30 @@ void drawSaturation(byte value, boolean nitrogen) {
 
   display.setTextSize(1);
   byte x = 0;
+
+  if (value > 170) {
+    if (nitrogen) {
+      if (nitrogenBlink) {
+        nitrogenBlink = !nitrogenBlink;
+        return;
+      }
+      nitrogenBlink = !nitrogenBlink;
+    } 
+    else {
+      if (oxygenBlink) {
+        oxygenBlink = !oxygenBlink;
+        return;
+      }
+      oxygenBlink = !oxygenBlink;
+    }
+  }
+
   if (nitrogen) {
     display.setCursor(0,54);
-
     display.println("N");
   } 
   else {
     display.setCursor(122,54);
-
     display.println("O");
     x = 122;
   }
@@ -99,7 +138,7 @@ void drawSaturation(byte value, boolean nitrogen) {
 }
 
 // Good up to 99 min and 99 sec. Font sizes 1-4 are valid
-void drawDiveTime(unsigned long seconds, int x, int y, int size, boolean bold) {
+void drawDiveTime(unsigned long seconds, byte x, byte y, byte size, boolean bold) {
 
   String timeString = secondsToString( seconds );
 
@@ -136,12 +175,13 @@ void drawDiveTime(unsigned long seconds, int x, int y, int size, boolean bold) {
 #endif
 }
 
-void drawClock(int x, int y, int size, boolean bold) {
+void drawClock(byte x, byte y, byte size, boolean bold) {
 
   String timeString;
 
   DateTime now = RTC.now();  
   int hour = now.hour();
+  int seconds = now.second();
 
   if (time12Hour) {
     if (now.hour() > 12) {
@@ -158,12 +198,16 @@ void drawClock(int x, int y, int size, boolean bold) {
   }
 
   if (clockBlink) {
-    clockBlink = !clockBlink;
     timeString = String( timeString + ':' );
   } 
   else {
-    clockBlink = !clockBlink;
     timeString = String( timeString + ' ' );
+  }
+
+  if (secondStore != seconds) {
+    secondStore = seconds;
+    clockBlink = !clockBlink;
+
   }
 
 
@@ -209,7 +253,7 @@ void drawClock(int x, int y, int size, boolean bold) {
 
 
 // Good up to three digits. Sizes 1-4 are valid
-void drawDepth(byte value, int x, int y, int size, boolean bold, String header) {
+void drawDepth(byte value, byte x, byte y, byte size, boolean bold, String header) {
 
   int headerLength = header.length();
   int headerWidth = ( 6 * headerLength);
@@ -278,6 +322,15 @@ String secondsToString( unsigned long diveSeconds) {
 
   return timeString;
 }
+
+
+
+
+
+
+
+
+
 
 
 
