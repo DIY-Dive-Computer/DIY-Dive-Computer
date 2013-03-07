@@ -26,11 +26,14 @@ int       depth                = 0; // Current Depth
 int       maxDepth             = 0; // Max Depth
 int       nitrogen             = 0; // Current nitrogen saturation level
 int       oxygen               = 0; // Current oxygen saturation level.
-int       temperature          = 0; // Current temp.
+int       temperature          = 85; // Current temp.
 int       batteryLevel         = 128; // Current battery capacity remaining.
 int       displayMode          = 0; // Stores the current display mode: 0 = menu, 1 = dive, 2 = log, 3 = settings. 
 int       currentMenuOption    = 0; // Stores which menu option is being displayed. 0 = dive, 1 = log, 2 = settings.
+int       diveModeDisplay      = 0; // There are multiple dive mode displays. This is the one currently being viewed.
 
+boolean   inWater              = false; // Goes true if the water sensor detects that the device is submerged.
+int       inWaterCounter       = 0; //  Counter used to determine if the device is in water.
 boolean   diveMode             = false; // Stores dive mode or surface mode state: 0 = surface mode, 1 = dive mode.
 boolean   alertShowing         = false; // true = there is an alert showing. 
 uint32_t  alertTime            = 0; // Stores time the alert was displayed.
@@ -49,84 +52,93 @@ int       recordInterval       = 29; // This is the inteval in which it will rec
 
 static unsigned char PROGMEM dive_logo_bmp[] =
 { 
-  B11111111, B11111111, B11111111,
-  B10000000, B00000000, B00000001,
-  B10000000, B00000000, B00000001,
-  B10000000, B00000000, B00000001,
-  B10000000, B10000000, B00000001,
-  B10000000, B10000000, B00000001,
-  B10000000, B10000000, B00000001,
-  B10000000, B00000000, B00000001,
-  B10000000, B00000000, B00000001,
-  B10000000, B00000000, B00000001,
-  B10000000, B00000000, B00000001,
-  B10000000, B00000000, B00000001,
-  B10000000, B00000000, B00000001,
-  B10000000, B00000000, B00000001,
-  B10000000, B00000000, B00000001,
-  B10000000, B00000000, B00000001,
-  B10000000, B00000000, B00000001,
-  B10000000, B00000000, B00000001,
-  B10000000, B00000000, B00000001,
-  B10000000, B00000000, B00000001,
-  B10000000, B00000000, B00000001,
-  B10000000, B00000000, B00000001,
-  B10000000, B00000000, B00000001,
-  B11111111, B11111111, B11111111 };
-  
-  static unsigned char PROGMEM log_logo_bmp[] =
-{ 
-  B11111111, B11111111, B11111111,
-  B10000000, B00000000, B00000001,
-  B10000000, B00000000, B00000001,
-  B10000000, B00000000, B00000001,
-  B10000000, B10100000, B00000001,
-  B10000000, B10100000, B00000001,
-  B10000000, B10100000, B00000001,
-  B10000000, B00000000, B00000001,
-  B10000000, B00000000, B00000001,
-  B10000000, B00000000, B00000001,
-  B10000000, B00000000, B00000001,
-  B10000000, B00000000, B00000001,
-  B10000000, B00000000, B00000001,
-  B10000000, B00000000, B00000001,
-  B10000000, B00000000, B00000001,
-  B10000000, B00000000, B00000001,
-  B10000000, B00000000, B00000001,
-  B10000000, B00000000, B00000001,
-  B10000000, B00000000, B00000001,
-  B10000000, B00000000, B00000001,
-  B10000000, B00000000, B00000001,
-  B10000000, B00000000, B00000001,
-  B10000000, B00000000, B00000001,
-  B11111111, B11111111, B11111111 };
+  B00011111, B11111111, B11111111,
+  B00001111, B11111111, B11111111,
+  B00000111, B11111111, B11111111,
+  B10000011, B11111111, B11111111,
+  B11000001, B11111111, B11111111,
+  B11100000, B11111111, B11111111,
+  B11110000, B01111111, B11111111,
+  B11111000, B00111111, B11111111,
+  B11111100, B00011111, B11111111,
+  B11111110, B00001111, B11111111,
+  B11111111, B00000111, B11111111,
+  B11111111, B10000011, B11111111,
+  B11111111, B11000001, B11111111,
+  B11111111, B11100000, B11111111,
+  B11111111, B11110000, B01111111,
+  B11111111, B11111000, B00111111,
+  B11111111, B11111100, B00011111,
+  B11111111, B11111110, B00001111,
+  B11111111, B11111111, B00000111,
+  B11111111, B11111111, B10000011,
+  B11111111, B11111111, B11000001,
+  B11111111, B11111111, B11100000,
+  B11111111, B11111111, B11110000,
+  B11111111, B11111111, B11111000 };
 
-  static unsigned char PROGMEM settings_logo_bmp[] =
+static unsigned char PROGMEM log_logo_bmp[] =
+{   
+  B00000100, B00000000, B00100000,
+  B00000111, B00000000, B11100000,
+  B00000111, B11000011, B11100000,
+  B00110111, B11100111, B11101100,
+
+  B00110111, B11100111, B11101100,
+  B00110111, B11100111, B11101100,
+  B10110111, B11100111, B11101101,
+  B10110111, B11100111, B11101101,
+  B10110111, B11100111, B11101101,
+  B10110111, B11100111, B11101101,
+  B10110111, B11100111, B11101101,
+  B10110111, B11100111, B11101101,
+  B10110111, B11100111, B11101101,
+
+
+  B10110111, B11100111, B11101101,
+  B10110111, B11100111, B11101101,
+  B10110111, B11100111, B11101101,
+  B10110111, B11100111, B11101101,
+
+  B10110011, B11100111, B11001101,
+  B10111110, B11100111, B01111101,
+  B10111111, B00100100, B11111101,
+  B10111111, B10100101, B11111101,
+  B11100001, B11000011, B10000111,
+  B11111111, B00100100, B11111111,
+  B11111111, B11000011, B11111111 };
+
+static unsigned char PROGMEM settings_logo_bmp[] =
 { 
-  B11111111, B11111111, B11111111,
-  B10000000, B00000000, B00000001,
-  B10000000, B00000000, B00000001,
-  B10000000, B00000000, B00000001,
-  B10000000, B10101000, B00000001,
-  B10000000, B10101000, B00000001,
-  B10000000, B10101000, B00000001,
-  B10000000, B00000000, B00000001,
-  B10000000, B00000000, B00000001,
-  B10000000, B00000000, B00000001,
-  B10000000, B00000000, B00000001,
-  B10000000, B00000000, B00000001,
-  B10000000, B00000000, B00000001,
-  B10000000, B00000000, B00000001,
-  B10000000, B00000000, B00000001,
-  B10000000, B00000000, B00000001,
-  B10000000, B00000000, B00000001,
-  B10000000, B00000000, B00000001,
-  B10000000, B00000000, B00000001,
-  B10000000, B00000000, B00000001,
-  B10000000, B00000000, B00000001,
-  B10000000, B00000000, B00000001,
-  B10000000, B00000000, B00000001,
-  B11111111, B11111111, B11111111 };
+  B00000000, B00000000, B00000000,
+  B00000000, B00000000, B00110000,
+  B00000000, B00000000, B11111100,
+  B00000000, B00000000, B11111100,
+
+  B00000000, B00000001, B11001110,
+  B00000000, B00000001, B11001110,
+  B00000000, B11000000, B11111100,
+  B00010001, B11100010, B11111100,
+
+  B00111001, B11100111, B00110000,
+  B01111111, B11111111, B10000000,
+  B00111111, B11111111, B00000000,
+  B00011111, B11111110, B00000000,
+
+  B00011111, B00111110, B00000000,
+  B01111110, B00011111, B10000000,
+  B11111100, B00001111, B11000000,
+  B11111100, B00001111, B11000000,
+
+  B01111110, B00011111, B10000000,
+  B00011111, B00111110, B00000000,
+  B00011111, B11111110, B00000000,
+  B00111111, B11111111, B00000000,
+
+  B01111111, B11111111, B10000000,
+  B00111001, B11100111, B00000000,
+  B00010001, B11100010, B00000000,
+  B00000000, B11000000, B00000000 };
 
 // *******************************************************************
 // ***************************** Setup *******************************
@@ -159,8 +171,6 @@ void setup()   {
 
   //testing
   //showAlert (0, "You are about to     become bent and die! Time to surface!");
-  temperature = 75;
-
   //  Setup the user input buttons.
   pinMode(5,INPUT); // right button
   pinMode(6,INPUT); // left button
@@ -191,8 +201,50 @@ void setup()   {
 void loop() {
 
   now = DateTime(Teensy3Clock.get());
-  diveTime = now.unixtime() - diveStart;
-  depth = analogRead(A0) / 5;
+  depth = analogRead(A0) / 2;
+
+
+  // In water detection.  This will tell if the user is in the water. Not exactly sure what it will be used for at this point but the code is here.
+  if (analogRead(A1) == 0) {
+    inWaterCounter++;
+  } 
+  else {
+    inWaterCounter--;
+  }
+
+  if (inWaterCounter > 100) {
+    inWater = true;
+    if (inWaterCounter > 150) inWaterCounter = 150;
+  }
+
+  if ( inWaterCounter < 0 ) {
+    inWater = false;
+    inWaterCounter = 0;
+  }
+
+  //  Serial.print("In water counter: ");
+  //  Serial.print(inWaterCounter);
+  //  Serial.print(" In Water Flag: ");
+  //  Serial.println(inWater);
+
+  // Dive start detection.  When the user decends below 4 feet, then the dive will start. 
+  if (diveMode == false && depth > 3) {
+    diveMode = true;
+    diveStart = now.unixtime(); // reset the timer.
+    diveTime = 0;
+    inWater = true;  // If you are 4 feet under water, it's safe to assume that you are in the water...
+    inWaterCounter = 150;
+    displayMode = 1; //  Since this conditional is only called when a dive starts, then put the display into dive mode if it's not already.
+  } 
+
+  // TODO: Probably need something similar to the inWaterCounter to prevent multiple dive start records if the user is hanging out between 3 and 4 feet.
+  if (diveMode == true && depth < 4) { 
+    diveMode = false;
+  }
+
+  if (diveMode) {
+    diveTime = now.unixtime() - diveStart;
+  }
 
   display.clearDisplay();
 
@@ -204,18 +256,58 @@ void loop() {
     } 
     else if (displayMode == 1) {
       // Dive Display
-      drawDiveDiveDiplayA();
+      if (diveModeDisplay == 0) {
+        drawDiveDiveDiplayB();
+      } 
+      else if (diveModeDisplay == 1) {
+        drawDiveDiveDiplayA();
+      } 
+      else {
+        drawDiveDiveDiplayC();
+      }
     }
     else if (displayMode == 2) {
       // Log Book Display
+      drawLogBook();
     }
 
     else if (displayMode == 3) {
       // Settings Display
+      drawSettings();
     }
   }
   display.display();
 }
+
+
+void drawLogBook() {
+  display.setTextColor(WHITE);
+  display.setTextSize(1);
+  display.setCursor(0, 0);
+  display.print("Log Book under construction.");
+
+  display.fillRect(0, 55, 13, 9, WHITE);
+  display.setTextColor(BLACK);
+  display.setCursor( 1, 56 );
+  display.setTextSize(1);
+  display.println("<<");
+
+}
+
+void drawSettings() {
+  display.setTextColor(WHITE);
+  display.setTextSize(1);
+  display.setCursor(0, 0);
+  display.print("Settings under construction.");  
+
+  display.fillRect(0, 55, 13, 9, WHITE);
+  display.setTextColor(BLACK);
+  display.setCursor( 1, 56 );
+  display.setTextSize(1);
+  display.println("<<");
+
+}
+
 
 void drawMenu() {
   display.setTextColor(WHITE);
@@ -228,24 +320,22 @@ void drawMenu() {
   if (currentMenuOption == 0) {
     display.setCursor( 37, 56 );      
     display.println("Dive Mode");
-      display.drawBitmap(52, 22, dive_logo_bmp, 24, 24, WHITE);
+    display.drawBitmap(52, 22, dive_logo_bmp, 24, 24, WHITE);
 
 
   } 
   else if (currentMenuOption == 1) {
     display.setCursor( 40, 56 );      
     display.println("View Log");
-      display.drawBitmap(52, 22, log_logo_bmp, 24, 24, WHITE);
+    display.drawBitmap(52, 22, log_logo_bmp, 24, 24, WHITE);
 
   } 
   else if (currentMenuOption == 2) {
     display.setCursor( 40, 56 );      
     display.println("Settings");
-      display.drawBitmap(52, 22, settings_logo_bmp, 24, 24, WHITE);
+    display.drawBitmap(52, 22, settings_logo_bmp, 24, 24, WHITE);
 
   }
-
-  // TODO: Draw Dive Icon
 
   display.fillRect(115, 55, 13, 9, WHITE);
   display.setTextColor(BLACK);
@@ -259,7 +349,12 @@ void drawMenu() {
   display.setTextSize(1);
   display.println("SEL");
 
+  display.setTextColor(WHITE);
 
+  if (diveMode) {
+    drawDepth( depth, 0, 26, 1, true, "Depth:" ); // Parameters: depth, x, y, size, bold, header string
+    //drawDiveTime(diveTime, 71, 26, 1, true); // Parameters: Time in seconds, x, y, size, bold
+  }  
 }
 
 
@@ -276,13 +371,35 @@ void rightPressed() {
     currentMenuOption ++;
     if (currentMenuOption > 2) currentMenuOption = 0;
   }
+
+  if (displayMode == 1) { // Dive
+    diveModeDisplay++;
+    if ( diveModeDisplay > 2 ) diveModeDisplay = 0;
+  }
 }
 
 void leftPressed() {
 
   if (displayMode == 0) { // Menu
     displayMode = currentMenuOption + 1;
+    return;
   }
+
+  if (displayMode == 1) { // Dive
+    displayMode = 0; 
+    return;
+  }
+
+  if (displayMode == 2) { // Log
+    displayMode = 0; 
+    return;
+  }
+
+  if (displayMode == 3) { // Settings
+    displayMode = 0; 
+    return;
+  }
+
 
 }
 
@@ -320,9 +437,83 @@ void drawDiveDiveDiplayA() {
   nitrogen++;
   oxygen++;
 
+  if (nitrogen > 255) nitrogen = 0;
+  if (oxygen > 255) oxygen = 0;
+
   logData();
 
 }
+
+void drawDiveDiveDiplayB() {
+
+  if (depth > maxDepth) maxDepth = depth;
+  display.setTextColor(WHITE);
+
+  drawDiveTime(diveTime, 56 ,31, 2, false); // Parameters: Time in seconds, x, y, size, bold
+  //  drawClock(61, 0, 1, false); // Parameters: x, y, size, bold
+  drawDepth( maxDepth, 14, 31, 2, false, "Max:"); // Parameters: depth, x, y, size, bold, header string
+  drawDepth( depth, 6, 0, 3, true, "Depth:"); // Parameters: depth, x, y, size, bold, header string
+  //  drawTemp(92, 0, 1, false);
+
+  drawTimeTempBar(14, 55, 100);
+
+  drawSaturation(nitrogen, true);
+  drawSaturation(oxygen, false);
+
+  display.fillRect(115, 55, 13, 9, WHITE);
+  display.setTextColor(BLACK);
+  display.setCursor( 116, 56 );
+  display.setTextSize(1);
+  display.println(">>");
+
+  display.fillRect(0, 55, 13, 9, WHITE);
+  display.setTextColor(BLACK);
+  display.setCursor( 1, 56 );
+  display.setTextSize(1);
+  display.println("<<");
+
+  nitrogen++;
+  oxygen++;
+
+  logData();
+
+}
+
+void drawDiveDiveDiplayC() {
+
+  if (depth > maxDepth) maxDepth = depth;
+  display.setTextColor(WHITE);
+
+  //drawDiveTime(diveTime, 76 ,31, 1, true); // Parameters: Time in seconds, x, y, size, bold
+  //  drawClock(61, 0, 1, false); // Parameters: x, y, size, bold
+  //drawDepth( maxDepth, 14, 31, 2, false, "Max:"); // Parameters: depth, x, y, size, bold, header string
+  drawDepth( depth, 26, 0, 5, true, "Depth:"); // Parameters: depth, x, y, size, bold, header string
+  //  drawTemp(92, 0, 1, false);
+
+  drawTimeTempBar(14, 55, 100);
+
+  drawSaturation(nitrogen, true);
+  drawSaturation(oxygen, false);
+
+  display.fillRect(115, 55, 13, 9, WHITE);
+  display.setTextColor(BLACK);
+  display.setCursor( 116, 56 );
+  display.setTextSize(1);
+  display.println(">>");
+
+  display.fillRect(0, 55, 13, 9, WHITE);
+  display.setTextColor(BLACK);
+  display.setCursor( 1, 56 );
+  display.setTextSize(1);
+  display.println("<<");
+
+  nitrogen++;
+  oxygen++;
+
+  logData();
+
+}
+
 
 // *******************************************************************
 // ************************** Record Data ****************************
@@ -369,22 +560,23 @@ String generateRecordDataString() {
 
 void drawSaturation(int value, boolean nitrogen) {
 
-  float level = ( 53.0 / 255.0 ) * value;
+  float level = ( 47.0 / 255.0 ) * value;
 
   display.setTextSize(1);
   int x = 0;
+  display.setTextColor(WHITE);
   if (nitrogen) {
-    display.setCursor(0,54);
+    display.setCursor(0,47);
 
     display.println("N");
   } 
   else {
-    display.setCursor(122,54);
+    display.setCursor(122,47);
 
     display.println("O");
     x = 122;
   }
-  display.fillRect(x, 53 - level, 5, level, WHITE);
+  display.fillRect(x, 47 - level, 5, level, WHITE);
 }
 
 // *******************************************************************
@@ -435,6 +627,43 @@ void drawDiveTime(unsigned long seconds, int x, int y, int size, boolean bold) {
 
 void drawClock(int x, int y, int size, boolean bold) {
 
+  String timeString = createTimeString(false);
+
+  int width = ( ( 6 * timeString.length()) * size) - size;
+  int height = (7 * size) + HEADER_DATA_GAP;
+  if ( width < 29 ) width = 29;
+
+  display.setCursor( ( ( width - 29 ) / 2) + x, y );
+  display.setTextSize(1);
+  display.println("Time:");
+
+  display.setTextSize(size);
+  if ( width > 29 ) {
+    display.setCursor( x, y + HEADER_DATA_GAP );
+  } 
+  else {
+    display.setCursor( ( ( width - ( ( 6 * 5 ) * size ) ) / 2 ) + x, y + HEADER_DATA_GAP);
+  }
+
+  display.print(timeString);
+
+  if ( bold ) {
+    if ( width > 29 ) {
+      display.setCursor( x + 1, y + HEADER_DATA_GAP );
+    } 
+    else {
+      display.setCursor( ( ( width - ( ( 6 * 5 ) * size ) ) / 2 ) + x + 1, y + HEADER_DATA_GAP);    
+    }
+    display.print(timeString);
+  }
+
+#ifdef SHOW_LAYOUT
+  display.drawRect(x, y, width, height, WHITE);
+#endif
+
+}
+
+String createTimeString(boolean amPm) {
   String timeString;
 
   int hour = now.hour();
@@ -472,40 +701,21 @@ void drawClock(int x, int y, int size, boolean bold) {
     timeString = String( timeString + '0' );
   }
 
+
   timeString = String( timeString + minutes );
 
-  int width = ( ( 6 * timeString.length()) * size) - size;
-  int height = (7 * size) + HEADER_DATA_GAP;
-  if ( width < 29 ) width = 29;
-
-  display.setCursor( ( ( width - 29 ) / 2) + x, y );
-  display.setTextSize(1);
-  display.println("Time:");
-
-  display.setTextSize(size);
-  if ( width > 29 ) {
-    display.setCursor( x, y + HEADER_DATA_GAP );
-  } 
-  else {
-    display.setCursor( ( ( width - ( ( 6 * 5 ) * size ) ) / 2 ) + x, y + HEADER_DATA_GAP);
+  if (time12Hour) {
+    if (now.hour() > 12) {
+      timeString = String( timeString + "PM" );
+    } 
+    else {
+      timeString = String( timeString + "AM" );
+    }
   }
 
   timeString.replace('0', 'O');
-  display.print(timeString);
 
-  if ( bold ) {
-    if ( width > 29 ) {
-      display.setCursor( x + 1, y + HEADER_DATA_GAP );
-    } 
-    else {
-      display.setCursor( ( ( width - ( ( 6 * 5 ) * size ) ) / 2 ) + x + 1, y + HEADER_DATA_GAP);    
-    }
-    display.print(timeString);
-  }
-
-#ifdef SHOW_LAYOUT
-  display.drawRect(x, y, width, height, WHITE);
-#endif
+  return timeString;
 }
 
 // *******************************************************************
@@ -570,6 +780,37 @@ void drawBattery(int x, int y) {
   display.drawLine(x + 24, y + 2, x + 24, y + 5, WHITE);
 }
 
+
+// *******************************************************************
+// *********************** Draw Time Temp Bar ************************
+// *******************************************************************
+
+// Bar has a fixed height of 9 pixels.
+void drawTimeTempBar(int x, int y, int w) {
+
+  display.fillRect(x, y, w, 9, WHITE);
+  display.setTextColor(BLACK);
+  display.setTextSize(1);
+
+  display.setCursor( x + 1, y + 1 );
+  display.print(createTimeString(true));
+
+  String depthString =  String(temperature);
+  depthString.replace( '0', 'O' );
+
+  if (ferinheight ) {
+    depthString += String(" F");
+  } 
+  else {
+    depthString += String(" C");
+  }
+
+  display.setCursor( x + w - (depthString.length() * 6), y + 1 );
+  display.print(depthString);
+
+  display.setCursor( ( x + w - 13 ), y - 1 );
+  display.write(9);
+}
 
 // *******************************************************************
 // *************************** Draw Depth ****************************
@@ -751,6 +992,17 @@ void blinkAlert() {
   }
   display.display();
 }
+
+
+
+
+
+
+
+
+
+
+
 
 
 
