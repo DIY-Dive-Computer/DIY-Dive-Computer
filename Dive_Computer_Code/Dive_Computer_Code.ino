@@ -1,5 +1,5 @@
 /******************************************************************
- * This is the Arduino Micro code for the DIY Dive Computer. 
+ * This is the Teensy 3.0 code for the DIY Dive Computer. 
  * 
  * Written by Victor Konshin.
  * BSD license, check license.txt for more information.
@@ -12,9 +12,11 @@
 #include <SD.h>
 #include "RTClib.h"
 #include "PITimer.h"
+#include <Bounce.h>
+#include <SPI.h>
+//#include "LowPower.h"
 
 #define OLED_RESET 3 // OLED Reset pin
-#define HEADER_DATA_GAP 9 // The gap between the heading line and the data line on most display items.
 //#define SHOW_LAYOUT // Uncomment this to see bounding boxes on UI elements - makes laying out items easier.
 
 Adafruit_SSD1306 display(OLED_RESET); // Allocate for the OLED
@@ -26,12 +28,22 @@ int       depth                = 0; // Current Depth
 int       maxDepth             = 0; // Max Depth
 int       nitrogen             = 0; // Current nitrogen saturation level
 int       oxygen               = 0; // Current oxygen saturation level.
-int       temperature          = 85; // Current temp.
+int       temperature          = 75; // Current temp.
 int       batteryLevel         = 128; // Current battery capacity remaining.
 int       displayMode          = 0; // Stores the current display mode: 0 = menu, 1 = dive, 2 = log, 3 = settings. 
 int       currentMenuOption    = 0; // Stores which menu option is being displayed. 0 = dive, 1 = log, 2 = settings.
 int       diveModeDisplay      = 0; // There are multiple dive mode displays. This is the one currently being viewed.
+uint32_t  last8Depths[8];
+int       depthsPointer        = 0;
+int       accentRate           = 0; // This will go away when accent rate is calculated from recent pressure readings.
 
+unsigned long      lLastDebounceTime    = 0;  // the last time the output pin was toggled
+unsigned long      rLastDebounceTime    = 0;  // the last time the output pin was toggled
+
+int       debounceDelay        = 300; // the debounce time; increase if the output flickers
+
+boolean   accentBlink          = false;
+boolean   batteryBlink         = false; 
 boolean   inWater              = false; // Goes true if the water sensor detects that the device is submerged.
 int       inWaterCounter       = 0; //  Counter used to determine if the device is in water.
 boolean   diveMode             = false; // Stores dive mode or surface mode state: 0 = surface mode, 1 = dive mode.
@@ -41,14 +53,25 @@ uint32_t  lastDataRecord       = 0; // Stores the last time data was recorded in
 uint32_t  lastColonStateChange = 0; // Stores the last time the clock was updates to that the blink will happen at 1Hz.
 
 DateTime  now;                      // Stores the current date/time for use throughout the code.
-const int chipSelect           = 4; // For the SD card breakout board
+const int sdChipSelect           = 10; // For the SD card breakout board
+const int psChipSelect           = 9; // For the SD card breakout board
+const int alertLEDPin            = 4; // A blinking LED is attached to this pin.
+const int wakeUpPin              = A1; 
 
 // These will be user preferences
 boolean   time12Hour           = true; // true = 12 hour time, false = 24 hour time.
 boolean   clockBlink           = true; // true = blink the colon, false = don't blink the colon.
 boolean   ferinheight          = true; // true = Ferinheight, false = Celsius.
 
-int       recordInterval       = 29; // This is the inteval in which it will record data to the SD card minus one.
+int       recordInterval       = 30; // This is the inteval in which it will record data to the SD card minus one.
+
+// Pressure sensor constants:
+const long c1=2216;
+const long c2=4932;
+const long c3=356;
+const long c4=223;
+const long c5=2273;
+const long c6=55;
 
 static unsigned char PROGMEM dive_logo_bmp[] =
 { 
@@ -140,6 +163,14 @@ static unsigned char PROGMEM settings_logo_bmp[] =
   B00010001, B11100010, B00000000,
   B00000000, B11000000, B00000000 };
 
+static unsigned char PROGMEM up_arrow[] =
+{ 
+  B00011000, 
+  B00111100, 
+  B01111110, 
+  B11111111 };
+
+
 // *******************************************************************
 // ***************************** Setup *******************************
 // *******************************************************************
@@ -163,22 +194,30 @@ void setup()   {
   lastColonStateChange = lastDataRecord;
   diveStart = now.unixtime();
 
-  // initialize access to the SD card
-  Serial.print("Initializing SD card...");
-  // make sure that the default chip select pin is set to
-  // output, even if you don't use it:
-  pinMode(10, OUTPUT);
 
-  //testing
-  //showAlert (0, "You are about to     become bent and die! Time to surface!");
+  pinMode(alertLEDPin, OUTPUT); // Warning LED
+  digitalWrite(alertLEDPin, LOW);
+
   //  Setup the user input buttons.
   pinMode(5,INPUT); // right button
   pinMode(6,INPUT); // left button
   attachInterrupt(5, rightPressed, FALLING);
   attachInterrupt(6, leftPressed, FALLING);
 
+  // Wake up pin is also the "in water" pin
+  pinMode(wakeUpPin, INPUT);   
+
+  // Setup Pressure Sensor
+  pinMode(psChipSelect, OUTPUT);
+
+  // initialize access to the SD card
+  Serial.print("Initializing SD card...");
+  // make sure that the default chip select pin is set to
+  // output, even if you don't use it:
+  pinMode(sdChipSelect, OUTPUT);
+
   // see if the card is present and can be initialized:
-  if (!SD.begin(chipSelect)) {
+  if (!SD.begin(sdChipSelect)) {
     Serial.println("Card failed, or not present");
     // don't do anything more:
     showAlert (0, "Failed to initialize the SD card.  Please make sure the card isinstalled correctly.");
@@ -186,6 +225,7 @@ void setup()   {
   else {
     Serial.println("card initialized.");
   }
+  showAlert (0, "You are severly bent and about to die. Youshould surface while you can.");
 
 
   // Give everything a half sec to settle
@@ -203,6 +243,13 @@ void loop() {
   now = DateTime(Teensy3Clock.get());
   depth = analogRead(A0) / 2;
 
+  last8Depths[depthsPointer] = depth;
+  depthsPointer++;
+  if (depthsPointer > 7) depthsPointer = 0;
+
+  // Fake battery level for testing.
+  //  batteryLevel -= 1;
+  //  if (batteryLevel < 0) batteryLevel = 255;
 
   // In water detection.  This will tell if the user is in the water. Not exactly sure what it will be used for at this point but the code is here.
   if (analogRead(A1) == 0) {
@@ -232,6 +279,7 @@ void loop() {
     diveMode = true;
     diveStart = now.unixtime(); // reset the timer.
     diveTime = 0;
+    maxDepth = 0;
     inWater = true;  // If you are 4 feet under water, it's safe to assume that you are in the water...
     inWaterCounter = 150;
     displayMode = 1; //  Since this conditional is only called when a dive starts, then put the display into dive mode if it's not already.
@@ -244,11 +292,12 @@ void loop() {
 
   if (diveMode) {
     diveTime = now.unixtime() - diveStart;
+    logData();
   }
 
-  display.clearDisplay();
-
   if (!alertShowing) {
+    display.clearDisplay();
+
     // 0 = menu, 1 = dive, 2 = log, 3 = settings
     if (displayMode == 0) {
       // Menu Display
@@ -275,8 +324,8 @@ void loop() {
       // Settings Display
       drawSettings();
     }
+    display.display();
   }
-  display.display();
 }
 
 
@@ -305,54 +354,55 @@ void drawSettings() {
   display.setCursor( 1, 56 );
   display.setTextSize(1);
   display.println("<<");
-
 }
-
 
 void drawMenu() {
   display.setTextColor(WHITE);
 
-  drawClock(0, 0, 1, false); // Parameters: x, y, size, bold
-  drawTemp(97, 0, 1, false);
-  drawBattery(50, 5);
+  //  drawClock(0, 0, 9, 1, false); // Parameters: x, y, size, bold
+  //  drawTemp(97, 0, 9, 1, false);
+  //  drawBattery(50, 5, 20, false);
+  //drawTimeTempBar(0, 0, 128, true);
+
+  display.setTextColor(WHITE);
 
   display.setTextSize(1);
   if (currentMenuOption == 0) {
-    display.setCursor( 37, 56 );      
+    display.setCursor( 37, 44 );      
     display.println("Dive Mode");
-    display.drawBitmap(52, 22, dive_logo_bmp, 24, 24, WHITE);
-
-
+    display.drawBitmap(52, 16, dive_logo_bmp, 24, 24, WHITE);
   } 
   else if (currentMenuOption == 1) {
-    display.setCursor( 40, 56 );      
+    display.setCursor( 40, 44 );      
     display.println("View Log");
-    display.drawBitmap(52, 22, log_logo_bmp, 24, 24, WHITE);
-
+    display.drawBitmap(52, 16, log_logo_bmp, 24, 24, WHITE);
   } 
   else if (currentMenuOption == 2) {
-    display.setCursor( 40, 56 );      
+    display.setCursor( 40, 44 );      
     display.println("Settings");
-    display.drawBitmap(52, 22, settings_logo_bmp, 24, 24, WHITE);
-
+    display.drawBitmap(52, 16, settings_logo_bmp, 24, 24, WHITE);
   }
 
-  display.fillRect(115, 55, 13, 9, WHITE);
+  display.fillRect(0, 0, 128, 9, WHITE);
   display.setTextColor(BLACK);
-  display.setCursor( 116, 56 );
+  display.setCursor( 36, 1 );
   display.setTextSize(1);
-  display.println(">>");
+  display.println("MAIN MENU:");
 
-  display.fillRect(0, 55, 19, 9, WHITE);
-  display.setTextColor(BLACK);
-  display.setCursor( 1, 56 );
-  display.setTextSize(1);
-  display.println("SEL");
+  //
+  //  display.fillRect(0, 55, 19, 9, WHITE);
+  //  display.setTextColor(BLACK);
+  //  display.setCursor( 1, 56 );
+  //  display.setTextSize(1);
+  //  display.println("SEL");
+
+  drawButtonOptions("SEL", ">>", true, true);
+
 
   display.setTextColor(WHITE);
 
   if (diveMode) {
-    drawDepth( depth, 0, 26, 1, true, "Depth:" ); // Parameters: depth, x, y, size, bold, header string
+    drawDepth( depth, 0, 26, 9, 1, true, "Depth:" ); // Parameters: depth, x, y, size, bold, header string
     //drawDiveTime(diveTime, 71, 26, 1, true); // Parameters: Time in seconds, x, y, size, bold
   }  
 }
@@ -363,6 +413,15 @@ void drawMenu() {
 // *******************************************************************
 
 void rightPressed() {
+
+  // TODO: Replace debounce code with Debounce library.
+
+  if ((millis() - rLastDebounceTime) < debounceDelay) {
+    return;
+  }
+
+  rLastDebounceTime = millis();
+
   if (alertShowing) {
     killAlert();
     return;
@@ -379,6 +438,14 @@ void rightPressed() {
 }
 
 void leftPressed() {
+
+  // TODO: Replace debounce code with Debounce library.
+
+  if ((millis() - lLastDebounceTime) < debounceDelay) {
+    return;
+  }
+
+  lLastDebounceTime = millis();
 
   if (displayMode == 0) { // Menu
     displayMode = currentMenuOption + 1;
@@ -414,13 +481,13 @@ void drawDiveDiveDiplayA() {
 
   //drawDepth( 0, 32, 3, false );
   //drawClock( 0, 0, 2, true);
-  drawDiveTime(diveTime, 61, 0, 2, false); // Parameters: Time in seconds, x, y, size, bold
-  drawClock(61, 25, 1, false); // Parameters: x, y, size, bold
-  drawDepth( maxDepth, 6, 32, 3, false, "Max:"); // Parameters: depth, x, y, size, bold, header string
-  drawDepth( depth, 6, 0, 3, false, "Depth:"); // Parameters: depth, x, y, size, bold, header string
+  drawDiveTime(diveTime, 61, 0, 9, 2, false); // Parameters: Time in seconds, x, y, gap, size, bold
+  drawClock(61, 25, 9, 1, false); // Parameters: x, y, gap, size, bold
+  drawDepth( maxDepth, 6, 32, 9, 3, false, "Max:"); // Parameters: depth, x, y, gap, size, bold, header string
+  drawDepth( depth, 6, 0, 9, 3, false, "Depth:"); // Parameters: depth, x, y, gap, size, bold, header string
   drawSaturation(nitrogen, true);
   drawSaturation(oxygen, false);
-  drawTemp(61, 42, 1, false);
+  drawTemp(61, 42, 9, 1, false); // Parameters: x, y, gap, size, bold
 
   display.fillRect(115, 55, 13, 9, WHITE);
   display.setTextColor(BLACK);
@@ -440,22 +507,23 @@ void drawDiveDiveDiplayA() {
   if (nitrogen > 255) nitrogen = 0;
   if (oxygen > 255) oxygen = 0;
 
-  logData();
 
 }
+
 
 void drawDiveDiveDiplayB() {
 
   if (depth > maxDepth) maxDepth = depth;
   display.setTextColor(WHITE);
 
-  drawDiveTime(diveTime, 56 ,31, 2, false); // Parameters: Time in seconds, x, y, size, bold
+  drawDiveTime(diveTime, 56, 31, 9, 2, false); // Parameters: Time in seconds, x, y, size, bold
   //  drawClock(61, 0, 1, false); // Parameters: x, y, size, bold
-  drawDepth( maxDepth, 14, 31, 2, false, "Max:"); // Parameters: depth, x, y, size, bold, header string
-  drawDepth( depth, 6, 0, 3, true, "Depth:"); // Parameters: depth, x, y, size, bold, header string
+  drawDepth( maxDepth, 14, 31, 9, 2, false, "Max:"); // Parameters: depth, x, y, size, bold, header string
+  drawDepth( depth, 6, 0, 9, 3, true, "Depth:"); // Parameters: depth, x, y, size, bold, header string
   //  drawTemp(92, 0, 1, false);
+  drawAccentRate(96, 0);
 
-  drawTimeTempBar(14, 55, 100);
+  drawTimeTempBar(14, 55, 100, true);
 
   drawSaturation(nitrogen, true);
   drawSaturation(oxygen, false);
@@ -475,10 +543,10 @@ void drawDiveDiveDiplayB() {
   nitrogen++;
   oxygen++;
 
-  logData();
 
 }
 
+// ++++++ DEPTH ONLY ++++++
 void drawDiveDiveDiplayC() {
 
   if (depth > maxDepth) maxDepth = depth;
@@ -487,30 +555,31 @@ void drawDiveDiveDiplayC() {
   //drawDiveTime(diveTime, 76 ,31, 1, true); // Parameters: Time in seconds, x, y, size, bold
   //  drawClock(61, 0, 1, false); // Parameters: x, y, size, bold
   //drawDepth( maxDepth, 14, 31, 2, false, "Max:"); // Parameters: depth, x, y, size, bold, header string
-  drawDepth( depth, 26, 0, 5, true, "Depth:"); // Parameters: depth, x, y, size, bold, header string
+  drawDepth( depth, 20, 0, 13, 5, true, "Depth:"); // Parameters: depth, x, y, size, bold, header string
   //  drawTemp(92, 0, 1, false);
 
-  drawTimeTempBar(14, 55, 100);
 
   drawSaturation(nitrogen, true);
   drawSaturation(oxygen, false);
 
-  display.fillRect(115, 55, 13, 9, WHITE);
-  display.setTextColor(BLACK);
-  display.setCursor( 116, 56 );
-  display.setTextSize(1);
-  display.println(">>");
+  drawButtonOptions("<<", ">>", true, true);
 
-  display.fillRect(0, 55, 13, 9, WHITE);
-  display.setTextColor(BLACK);
-  display.setCursor( 1, 56 );
-  display.setTextSize(1);
-  display.println("<<");
+
+  //  display.fillRect(115, 55, 13, 9, WHITE);
+  //  display.setTextColor(BLACK);
+  //  display.setCursor( 116, 56 );
+  //  display.setTextSize(1);
+  //  display.println(">>");
+  //
+  //  display.fillRect(0, 55, 13, 9, WHITE);
+  //  display.setTextColor(BLACK);
+  //  display.setCursor( 1, 56 );
+  //  display.setTextSize(1);
+  //  display.println("<<");
 
   nitrogen++;
   oxygen++;
 
-  logData();
 
 }
 
@@ -552,6 +621,28 @@ String generateRecordDataString() {
   return returnString;  
 }
 
+void drawButtonOptions(String left, String right, boolean showTimeTemp, boolean showBattery) {
+
+  int leftWidth = ( left.length() * 6 ) - 1;
+  int rightWidth = ( right.length() * 6 ) - 1;
+
+  display.fillRect(0, 55, leftWidth + 2, 9, WHITE);
+  display.setTextColor(BLACK);
+  display.setCursor( 1, 56 );
+  display.setTextSize(1);
+  display.println(left);
+
+  display.fillRect( 128 - ( rightWidth + 2 ), 55, rightWidth + 2, 9, WHITE);
+  display.setTextColor(BLACK);
+  display.setCursor( 128 - ( rightWidth + 1 ), 56 );
+  display.setTextSize(1);
+  display.println(right);
+
+  // (leftWidth + rightWidth + 4);
+  if (showTimeTemp) {
+    drawTimeTempBar(leftWidth + 3, 55, 128 - ( ( leftWidth + 3 ) + ( rightWidth + 3 ) ) , showBattery);
+  }
+}
 
 
 // *******************************************************************
@@ -584,12 +675,12 @@ void drawSaturation(int value, boolean nitrogen) {
 // *******************************************************************
 
 // Good up to 99 min and 99 sec. Font sizes 1-4 are valid
-void drawDiveTime(unsigned long seconds, int x, int y, int size, boolean bold) {
+void drawDiveTime(unsigned long seconds, int x, int y, int headingGap, int size, boolean bold) {
 
   String timeString = secondsToString( seconds );
 
   int width = ( ( 6 * 5) * size) - size;
-  int height = (7 * size) + HEADER_DATA_GAP;
+  int height = (7 * size) + headingGap;
   if ( width < 59 ) width = 59;
 
   display.setCursor( ( ( width - 59 ) / 2) + x, y );
@@ -598,20 +689,20 @@ void drawDiveTime(unsigned long seconds, int x, int y, int size, boolean bold) {
 
   display.setTextSize(size);
   if ( width > 59 ) {
-    display.setCursor( x, y + HEADER_DATA_GAP );
+    display.setCursor( x, y + headingGap );
   } 
   else {
-    display.setCursor( ( ( width - ( ( 6 * 5 ) * size ) ) / 2 ) + x, y + HEADER_DATA_GAP);
+    display.setCursor( ( ( width - ( ( 6 * 5 ) * size ) ) / 2 ) + x, y + headingGap);
   }
 
   display.print(timeString);
 
   if ( bold ) {
     if ( width > 59 ) {
-      display.setCursor( x + 1, y + HEADER_DATA_GAP );
+      display.setCursor( x + 1, y + headingGap );
     } 
     else {
-      display.setCursor( ( ( width - ( ( 6 * 5 ) * size ) ) / 2 ) + x + 1, y + HEADER_DATA_GAP);    
+      display.setCursor( ( ( width - ( ( 6 * 5 ) * size ) ) / 2 ) + x + 1, y + headingGap);    
     }
     display.print(timeString);
   }
@@ -625,12 +716,12 @@ void drawDiveTime(unsigned long seconds, int x, int y, int size, boolean bold) {
 // *************************** Draw Clock ****************************
 // *******************************************************************
 
-void drawClock(int x, int y, int size, boolean bold) {
+void drawClock(int x, int y, int headingGap, int size, boolean bold) {
 
   String timeString = createTimeString(false);
 
   int width = ( ( 6 * timeString.length()) * size) - size;
-  int height = (7 * size) + HEADER_DATA_GAP;
+  int height = (7 * size) + headingGap;
   if ( width < 29 ) width = 29;
 
   display.setCursor( ( ( width - 29 ) / 2) + x, y );
@@ -639,20 +730,20 @@ void drawClock(int x, int y, int size, boolean bold) {
 
   display.setTextSize(size);
   if ( width > 29 ) {
-    display.setCursor( x, y + HEADER_DATA_GAP );
+    display.setCursor( x, y + headingGap );
   } 
   else {
-    display.setCursor( ( ( width - ( ( 6 * 5 ) * size ) ) / 2 ) + x, y + HEADER_DATA_GAP);
+    display.setCursor( ( ( width - ( ( 6 * 5 ) * size ) ) / 2 ) + x, y + headingGap);
   }
 
   display.print(timeString);
 
   if ( bold ) {
     if ( width > 29 ) {
-      display.setCursor( x + 1, y + HEADER_DATA_GAP );
+      display.setCursor( x + 1, y + headingGap );
     } 
     else {
-      display.setCursor( ( ( width - ( ( 6 * 5 ) * size ) ) / 2 ) + x + 1, y + HEADER_DATA_GAP);    
+      display.setCursor( ( ( width - ( ( 6 * 5 ) * size ) ) / 2 ) + x + 1, y + headingGap);    
     }
     display.print(timeString);
   }
@@ -705,7 +796,7 @@ String createTimeString(boolean amPm) {
   timeString = String( timeString + minutes );
 
   if (time12Hour) {
-    if (now.hour() > 12) {
+    if (now.hour() > 11) {
       timeString = String( timeString + "PM" );
     } 
     else {
@@ -723,13 +814,13 @@ String createTimeString(boolean amPm) {
 // *******************************************************************
 
 // Good up to three digits. Sizes 1-4 are valid
-void drawTemp(int x, int y, int size, boolean bold) {
+void drawTemp(int x, int y, int headingGap, int size, boolean bold) {
 
   int headerLength = 5; // "Temp:"
   int headerWidth = ( 6 * headerLength);
 
   int width = ( ( 6 * 4 ) * size) - size + 1;
-  int height = (7 * size) + HEADER_DATA_GAP;
+  int height = (7 * size) + headingGap;
 
   if ( width < headerWidth ) width = headerWidth;
 
@@ -747,7 +838,7 @@ void drawTemp(int x, int y, int size, boolean bold) {
   display.println("Temp:");
 
   display.setTextSize(size);
-  display.setCursor( ( ( width - tempWidth ) / 2 ) + x + 1, y + HEADER_DATA_GAP );
+  display.setCursor( ( ( width - tempWidth ) / 2 ) + x + 1, y + headingGap );
   String depthString =  String(temperature);
   depthString.replace( '0', 'O' );
 
@@ -760,7 +851,7 @@ void drawTemp(int x, int y, int size, boolean bold) {
   display.print(depthString);
 
   if ( bold ) {
-    display.setCursor( ( ( ( width - tempWidth ) / 2 ) + x) + 2, y + HEADER_DATA_GAP );
+    display.setCursor( ( ( ( width - tempWidth ) / 2 ) + x) + 2, y + headingGap );
     display.print(depthString);
   }
 
@@ -773,11 +864,26 @@ void drawTemp(int x, int y, int size, boolean bold) {
 // ************************** Draw Battery ***************************
 // *******************************************************************
 
-void drawBattery(int x, int y) {
-  int levelWidth = ( 24.0f / 255.0f ) * batteryLevel;
-  display.drawRect(x, y, 24, 8, WHITE);
-  display.fillRect(x, y, levelWidth, 8, WHITE);
-  display.drawLine(x + 24, y + 2, x + 24, y + 5, WHITE);
+void drawBattery(int x, int y, float width, boolean color) { // if color = false, battey is white, true = black battery.
+
+  uint16_t colorValue = WHITE;
+  if (color) colorValue = BLACK;
+
+  if (batteryLevel < 64) {
+    if (batteryBlink) {
+      colorValue = BLACK;
+      if (color) colorValue = WHITE;
+      batteryBlink = false;
+    } 
+    else {
+      batteryBlink = true;
+    }
+  }
+
+  int levelWidth = ( width / 255.0f ) * batteryLevel;
+  display.drawRect(x, y, width, 7, colorValue);
+  display.fillRect(x + 1, y + 1, levelWidth - 2, 5, colorValue);
+  display.drawLine(x + width, y + 2, x + width, y + 4, colorValue);
 }
 
 
@@ -786,30 +892,57 @@ void drawBattery(int x, int y) {
 // *******************************************************************
 
 // Bar has a fixed height of 9 pixels.
-void drawTimeTempBar(int x, int y, int w) {
+void drawTimeTempBar( int x, int y, int w, boolean showBattery ) {
 
+  // Draw Bar
   display.fillRect(x, y, w, 9, WHITE);
+
+  // DrawTime
   display.setTextColor(BLACK);
   display.setTextSize(1);
 
   display.setCursor( x + 1, y + 1 );
-  display.print(createTimeString(true));
+  String timeString = createTimeString(true);
+  int timeWidth = ( timeString.length() * 6 ) - 1;
+  display.print(timeString);
 
-  String depthString =  String(temperature);
-  depthString.replace( '0', 'O' );
+  // Draw Temp
+  String tempString = String(temperature);
+  tempString.replace( '0', 'O' );
 
   if (ferinheight ) {
-    depthString += String(" F");
+    tempString += String(" F");
   } 
   else {
-    depthString += String(" C");
+    tempString += String(" C");
   }
 
-  display.setCursor( x + w - (depthString.length() * 6), y + 1 );
-  display.print(depthString);
+  int tempWidth = ( tempString.length() * 6 ) - 1;
+
+  display.setCursor( x + w - tempWidth - 1, y + 1 );
+  display.print(tempString);
 
   display.setCursor( ( x + w - 13 ), y - 1 );
   display.write(9);
+
+  Serial.print ("x = ");
+  Serial.print (x);
+  Serial.print (" w = ");
+  Serial.print (w);
+  Serial.print (" timeWidth = ");
+  Serial.print (timeWidth);
+  Serial.print (" tempWidth = ");
+  Serial.print (tempWidth);
+
+
+  // Draw Battery
+  if (showBattery) {
+    int batteryWidth = w - ( timeWidth + tempWidth + 16);
+    Serial.print (" batteryWidth = ");
+    Serial.println (batteryWidth);
+
+    drawBattery( x + timeWidth + 8, y + 1, batteryWidth, true);
+  }
 }
 
 // *******************************************************************
@@ -818,13 +951,13 @@ void drawTimeTempBar(int x, int y, int w) {
 
 
 // Good up to three digits. Sizes 1-4 are valid
-void drawDepth(int value, int x, int y, int size, boolean bold, String header) {
+void drawDepth(int value, int x, int y, int headingGap, int size, boolean bold, String header) {
 
   int headerLength = header.length();
   int headerWidth = ( 6 * headerLength);
 
   int width = ( ( 6 * 3 ) * size) - size + 1;
-  int height = (7 * size) + HEADER_DATA_GAP;
+  int height = (7 * size) + headingGap;
 
   if ( width < headerWidth ) width = headerWidth;
 
@@ -841,13 +974,13 @@ void drawDepth(int value, int x, int y, int size, boolean bold, String header) {
   display.println(header);
 
   display.setTextSize(size);
-  display.setCursor( ( ( width - depthWidth ) / 2 ) + x + 1, y + HEADER_DATA_GAP );
+  display.setCursor( ( ( width - depthWidth ) / 2 ) + x + 1, y + headingGap);
   String depthString =  String(value);
   depthString.replace( '0', 'O' );
   display.print(depthString);
 
   if ( bold ) {
-    display.setCursor( ( ( ( width - depthWidth ) / 2 ) + x) + 2, y + HEADER_DATA_GAP );
+    display.setCursor( ( ( ( width - depthWidth ) / 2 ) + x) + 2, y + headingGap );
     display.print(depthString);
   }
 
@@ -860,16 +993,66 @@ void drawDepth(int value, int x, int y, int size, boolean bold, String header) {
 // ************************ Draw Accent Rate *************************
 // *******************************************************************
 
-void drawAccentRate(void) {
-  uint8_t color = WHITE;
-  for (int16_t i=min(display.width(),display.height())/2; i>0; i-=5) {
-    display.fillTriangle(display.width()/2, display.height()/2-i,
-    display.width()/2-i, display.height()/2+i,
-    display.width()/2+i, display.height()/2+i, WHITE);
-    if (color == WHITE) color = BLACK;
-    else color = WHITE;
-    display.display();
+//void drawAccentRate(int x, int y) {
+//
+//  accentRate++; // TODO: Calculate accent rate here.
+//  if (accentRate > 255) accentRate = 0;
+//
+//  int levels = accentRate / 13; // will create 20 levels.
+//
+//  uint8_t color = WHITE;
+//
+//  for (int counter = 0; counter < 20; counter++ ) {
+//    if ( counter > levels ) {
+//      display.drawLine(x + 20 - counter, y + 19 - counter, x + 20 - counter, y + 19 - counter, color);
+//
+//    } 
+//    else {
+//      display.drawLine(x + 20 - counter, y + 19 - counter, x + 20, y + 19 - counter, color);
+//
+//    }
+//  }
+//}
+
+void drawAccentRate(int x, int y) {
+
+  accentRate++; // TODO: Calculate accent rate here.  value in feet per minute.
+  if (accentRate > 40) accentRate = -10;
+
+  uint16_t colorValue = WHITE;
+
+  if (accentRate > 30) {
+    if (accentBlink) {
+      colorValue = BLACK;
+      accentBlink = false;
+    } 
+    else {
+      accentBlink = true;
+    }
+    display.drawBitmap(x, y, up_arrow, 8, 4, colorValue);
   }
+
+  if (accentRate > 20) {
+    display.drawBitmap(x, y + 4, up_arrow, 8, 4, colorValue);
+  }
+
+  if (accentRate > 10) {
+    display.drawBitmap(x, y + 8, up_arrow, 8, 4, colorValue);
+  }
+
+  if (accentRate > 0) {
+    display.drawBitmap(x, y + 12, up_arrow, 8, 4, colorValue);
+  }
+
+  //  display.setCursor( x, y + 18 );
+  //  display.setTextColor(WHITE);
+  //  display.setTextSize(1);
+  //  display.println(accentRate);
+
+}
+
+void drawLogEntry(int position, DateTime date, int diveNumber) {
+
 }
 
 
@@ -916,6 +1099,7 @@ void showAlert(int time, String message) { // time = 0 will ask the user to dism
     alertTime = now.unixtime();
     display.clearDisplay();
     display.display();
+  digitalWrite(alertLEDPin, HIGH);
 
     display.setTextSize(1);
     display.setCursor( 0, 20 );
@@ -963,6 +1147,7 @@ void showAlert(int time, String message) { // time = 0 will ask the user to dism
 
 void killAlert() {
   alertShowing = false;
+    digitalWrite(alertLEDPin, LOW);
   PITimer1.stop();
   PITimer0.stop();
   display.clearDisplay();
@@ -970,7 +1155,7 @@ void killAlert() {
 }
 
 void blinkAlert() {
-  PITimer1.clear();
+  //PITimer1.clear();
   if (now.unixtime() > lastColonStateChange) {
     lastColonStateChange = now.unixtime();
     clockBlink = !clockBlink;
@@ -993,37 +1178,23 @@ void blinkAlert() {
   display.display();
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+//void enterSleep() {
+//    // Allow wake up pin to trigger interrupt on low.
+//    attachInterrupt(0, wakeUp, LOW);
+//    
+//    // Enter power down state with ADC and BOD module disabled.
+//    // Wake up when wake up pin is low.
+//    LowPower.powerDown(SLEEP_FOREVER, ADC_OFF, BOD_OFF); 
+//    
+//    // Disable external pin interrupt on wake up pin.
+//    detachInterrupt(0); 
+//    
+//    // Do something here
+//    // Example: Read sensor, data logging, data transmission.
+//}
+//
+//void wakeUp() {
+//    // Just a handler for the pin interrupt.
+//}
 
 
