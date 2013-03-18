@@ -8,6 +8,7 @@
 
 #include <Wire.h>
 #include <Adafruit_GFX.h>
+//#include "UILibrary.h"
 #include <Adafruit_SSD1306.h>
 #include <SD.h>
 #include "RTClib.h"
@@ -56,14 +57,16 @@ DateTime  now;                      // Stores the current date/time for use thro
 const int sdChipSelect           = 10; // For the SD card breakout board
 const int psChipSelect           = 9; // For the SD card breakout board
 const int alertLEDPin            = 4; // A blinking LED is attached to this pin.
-const int wakeUpPin              = A1; 
+const int wakeUpPin              = A1; // Pin for water wake up.
+const int rightButton            = 5; // Pin for the right button.
+const int leftButton             = 6; // Pin for the left button.
 
 // These will be user preferences
 boolean   time12Hour           = true; // true = 12 hour time, false = 24 hour time.
 boolean   clockBlink           = true; // true = blink the colon, false = don't blink the colon.
 boolean   ferinheight          = true; // true = Ferinheight, false = Celsius.
-
-int       recordInterval       = 30; // This is the inteval in which it will record data to the SD card minus one.
+boolean   doubleAccentBelowRec = true; // True = 60ft/min accent rate below recreational limits (130ft). 30ft/min otherwise.
+int       recordInterval       = 30; // This is the inteval in which it will record data to the SD card in minutes.
 
 // Pressure sensor constants:
 const long c1=2216;
@@ -199,10 +202,10 @@ void setup()   {
   digitalWrite(alertLEDPin, LOW);
 
   //  Setup the user input buttons.
-  pinMode(5,INPUT); // right button
-  pinMode(6,INPUT); // left button
-  attachInterrupt(5, rightPressed, FALLING);
-  attachInterrupt(6, leftPressed, FALLING);
+  pinMode(rightButton,INPUT); // right button
+  pinMode(leftButton,INPUT); // left button
+  attachInterrupt(rightButton, rightPressed, FALLING);
+  attachInterrupt(leftButton, leftPressed, FALLING);
 
   // Wake up pin is also the "in water" pin
   pinMode(wakeUpPin, INPUT);   
@@ -225,7 +228,7 @@ void setup()   {
   else {
     Serial.println("card initialized.");
   }
-  showAlert (0, "You are severly bent and about to die. Youshould surface while you can.");
+  //showAlert (0, "You are severly bent and about to die. Youshould surface while you can.");
 
 
   // Give everything a half sec to settle
@@ -240,8 +243,17 @@ void setup()   {
 
 void loop() {
 
+  nitrogen++;
+  oxygen++;
+  if (nitrogen > 255) nitrogen = 0;
+  if (oxygen > 255) oxygen = 0;
+
   now = DateTime(Teensy3Clock.get());
+
+  // Read Depth 
   depth = analogRead(A0) / 2;
+  // Set Max Depth
+  if (depth > maxDepth) maxDepth = depth;
 
   last8Depths[depthsPointer] = depth;
   depthsPointer++;
@@ -306,14 +318,15 @@ void loop() {
     else if (displayMode == 1) {
       // Dive Display
       if (diveModeDisplay == 0) {
-        drawDiveDiveDiplayB();
-      } 
-      else if (diveModeDisplay == 1) {
         drawDiveDiveDiplayA();
       } 
+      else if (diveModeDisplay == 1) {
+        drawDiveDiveDiplayB();
+      }  
       else {
         drawDiveDiveDiplayC();
       }
+
     }
     else if (displayMode == 2) {
       // Log Book Display
@@ -330,30 +343,36 @@ void loop() {
 
 
 void drawLogBook() {
-  display.setTextColor(WHITE);
-  display.setTextSize(1);
-  display.setCursor(0, 0);
-  display.print("Log Book under construction.");
 
-  display.fillRect(0, 55, 13, 9, WHITE);
+  display.fillRect(0, 0, 128, 9, WHITE);
+
   display.setTextColor(BLACK);
-  display.setCursor( 1, 56 );
   display.setTextSize(1);
-  display.println("<<");
+  display.setCursor(40, 1);
+  display.print("Log Book");
+
+  display.setTextColor(WHITE);
+  display.setCursor(0, 10);
+  display.print("Under construction");
+
+  drawButtonOptions("MENU", ">>", true, false);
+
 
 }
 
 void drawSettings() {
-  display.setTextColor(WHITE);
-  display.setTextSize(1);
-  display.setCursor(0, 0);
-  display.print("Settings under construction.");  
+  display.fillRect(0, 0, 128, 9, WHITE);
 
-  display.fillRect(0, 55, 13, 9, WHITE);
   display.setTextColor(BLACK);
-  display.setCursor( 1, 56 );
   display.setTextSize(1);
-  display.println("<<");
+  display.setCursor(40, 1);
+  display.print("Settings");
+
+  display.setTextColor(WHITE);
+  display.setCursor(0, 10);
+  display.print("Under construction");
+
+  drawButtonOptions("MENU", ">>", true, false);
 }
 
 void drawMenu() {
@@ -414,7 +433,7 @@ void drawMenu() {
 
 void rightPressed() {
 
-  // TODO: Replace debounce code with Debounce library.
+  // TODO: Replace debounce code with Debounce library since it provides more functionality.
 
   if ((millis() - rLastDebounceTime) < debounceDelay) {
     return;
@@ -439,7 +458,7 @@ void rightPressed() {
 
 void leftPressed() {
 
-  // TODO: Replace debounce code with Debounce library.
+  // TODO: Replace debounce code with Debounce library since it provides more functionality.
 
   if ((millis() - lLastDebounceTime) < debounceDelay) {
     return;
@@ -474,75 +493,44 @@ void leftPressed() {
 // *********************** Dive Mode Displays ************************
 // *******************************************************************
 
+
 void drawDiveDiveDiplayA() {
 
-  if (depth > maxDepth) maxDepth = depth;
   display.setTextColor(WHITE);
 
-  //drawDepth( 0, 32, 3, false );
-  //drawClock( 0, 0, 2, true);
-  drawDiveTime(diveTime, 61, 0, 9, 2, false); // Parameters: Time in seconds, x, y, gap, size, bold
-  drawClock(61, 25, 9, 1, false); // Parameters: x, y, gap, size, bold
-  drawDepth( maxDepth, 6, 32, 9, 3, false, "Max:"); // Parameters: depth, x, y, gap, size, bold, header string
-  drawDepth( depth, 6, 0, 9, 3, false, "Depth:"); // Parameters: depth, x, y, gap, size, bold, header string
+  drawDiveTime(diveTime, 62, 0, 9, 2, false); // Parameters: Time in seconds, x, y, size, bold
+  //  drawClock(61, 0, 1, false); // Parameters: x, y, size, bold
+  drawDepth( maxDepth, 14, 31, 9, 2, false, "Max:"); // Parameters: depth, x, y, size, bold, header string
+  drawDepth( depth, 6, 0, 9, 3, true, "Depth:"); // Parameters: depth, x, y, size, bold, header string
+  //  drawTemp(92, 0, 1, false);
+  // drawAccentRate(96, 31);
+  drawAccentRateBars(71, 24);
+  drawAccentRate(70, 45, 1, true, true);
+  drawTimeTempBar(14, 56, 100, true);
+
   drawSaturation(nitrogen, true);
   drawSaturation(oxygen, false);
-  drawTemp(61, 42, 9, 1, false); // Parameters: x, y, gap, size, bold
 
-  display.fillRect(115, 55, 13, 9, WHITE);
-  display.setTextColor(BLACK);
-  display.setCursor( 116, 56 );
-  display.setTextSize(1);
-  display.println(">>");
-
-  display.fillRect(0, 55, 13, 9, WHITE);
-  display.setTextColor(BLACK);
-  display.setCursor( 1, 56 );
-  display.setTextSize(1);
-  display.println("<<");
-
-  nitrogen++;
-  oxygen++;
-
-  if (nitrogen > 255) nitrogen = 0;
-  if (oxygen > 255) oxygen = 0;
-
+  drawButtonOptions("^^", ">>", true, true);
 
 }
-
 
 void drawDiveDiveDiplayB() {
 
   if (depth > maxDepth) maxDepth = depth;
   display.setTextColor(WHITE);
 
-  drawDiveTime(diveTime, 56, 31, 9, 2, false); // Parameters: Time in seconds, x, y, size, bold
-  //  drawClock(61, 0, 1, false); // Parameters: x, y, size, bold
-  drawDepth( maxDepth, 14, 31, 9, 2, false, "Max:"); // Parameters: depth, x, y, size, bold, header string
-  drawDepth( depth, 6, 0, 9, 3, true, "Depth:"); // Parameters: depth, x, y, size, bold, header string
-  //  drawTemp(92, 0, 1, false);
-  drawAccentRate(96, 0);
+  drawDiveTime(diveTime, 56, 28, 9, 2, false); // Parameters: Time in seconds, x, y, size, bold
+  drawDepth( maxDepth, 10, 28, 9, 2, false, "Max:"); // Parameters: depth, x, y, size, bold, header string
+  drawDepth( depth, 10, 2, 9, 2, true, "Depth:"); // Parameters: depth, x, y, size, bold, header string
+  drawAccentRateArrows(96, 0);
 
   drawTimeTempBar(14, 55, 100, true);
 
   drawSaturation(nitrogen, true);
   drawSaturation(oxygen, false);
 
-  display.fillRect(115, 55, 13, 9, WHITE);
-  display.setTextColor(BLACK);
-  display.setCursor( 116, 56 );
-  display.setTextSize(1);
-  display.println(">>");
-
-  display.fillRect(0, 55, 13, 9, WHITE);
-  display.setTextColor(BLACK);
-  display.setCursor( 1, 56 );
-  display.setTextSize(1);
-  display.println("<<");
-
-  nitrogen++;
-  oxygen++;
-
+  drawButtonOptions("^^", ">>", true, true);
 
 }
 
@@ -552,34 +540,13 @@ void drawDiveDiveDiplayC() {
   if (depth > maxDepth) maxDepth = depth;
   display.setTextColor(WHITE);
 
-  //drawDiveTime(diveTime, 76 ,31, 1, true); // Parameters: Time in seconds, x, y, size, bold
-  //  drawClock(61, 0, 1, false); // Parameters: x, y, size, bold
-  //drawDepth( maxDepth, 14, 31, 2, false, "Max:"); // Parameters: depth, x, y, size, bold, header string
   drawDepth( depth, 20, 0, 13, 5, true, "Depth:"); // Parameters: depth, x, y, size, bold, header string
-  //  drawTemp(92, 0, 1, false);
-
+  drawAccentRateArrows(110, 16);
 
   drawSaturation(nitrogen, true);
   drawSaturation(oxygen, false);
 
-  drawButtonOptions("<<", ">>", true, true);
-
-
-  //  display.fillRect(115, 55, 13, 9, WHITE);
-  //  display.setTextColor(BLACK);
-  //  display.setCursor( 116, 56 );
-  //  display.setTextSize(1);
-  //  display.println(">>");
-  //
-  //  display.fillRect(0, 55, 13, 9, WHITE);
-  //  display.setTextColor(BLACK);
-  //  display.setCursor( 1, 56 );
-  //  display.setTextSize(1);
-  //  display.println("<<");
-
-  nitrogen++;
-  oxygen++;
-
+  drawButtonOptions("^^", ">>", true, true);
 
 }
 
@@ -644,7 +611,6 @@ void drawButtonOptions(String left, String right, boolean showTimeTemp, boolean 
   }
 }
 
-
 // *******************************************************************
 // ************************ Draw Saturation **************************
 // *******************************************************************
@@ -669,6 +635,7 @@ void drawSaturation(int value, boolean nitrogen) {
   }
   display.fillRect(x, 47 - level, 5, level, WHITE);
 }
+
 
 // *******************************************************************
 // ************************* Draw Dive Time **************************
@@ -993,35 +960,50 @@ void drawDepth(int value, int x, int y, int headingGap, int size, boolean bold, 
 // ************************ Draw Accent Rate *************************
 // *******************************************************************
 
-//void drawAccentRate(int x, int y) {
-//
-//  accentRate++; // TODO: Calculate accent rate here.
-//  if (accentRate > 255) accentRate = 0;
-//
-//  int levels = accentRate / 13; // will create 20 levels.
-//
-//  uint8_t color = WHITE;
-//
-//  for (int counter = 0; counter < 20; counter++ ) {
-//    if ( counter > levels ) {
-//      display.drawLine(x + 20 - counter, y + 19 - counter, x + 20 - counter, y + 19 - counter, color);
-//
-//    } 
-//    else {
-//      display.drawLine(x + 20 - counter, y + 19 - counter, x + 20, y + 19 - counter, color);
-//
-//    }
-//  }
-//}
+void drawAccentRate(int x, int y, int textSize, boolean background, boolean black) {
 
-void drawAccentRate(int x, int y) {
+  uint8_t color = WHITE;
+  if (black) color = BLACK;
+
+if (background) {
+  display.fillRect(x,y,49,9, WHITE); 
+}
+  display.setCursor( x + 1, y + 1 );
+  display.setTextColor(color);
+  display.setTextSize(textSize);
+
+  if ( accentRate < 10 && accentRate > -10 ) {
+    display.print(" ");
+  }
+  if ( accentRate < 100 && accentRate > -100 ) {
+    display.print(" ");
+  }
+  if( accentRate == 0 ) {
+    display.print(" ");
+  } 
+  else if (accentRate > 0) {
+    display.print("+");
+  }
+
+  display.print(accentRate);
+
+  display.print("ft/m");
+
+
+
+}
+
+void drawAccentRateArrows(int x, int y) {
 
   accentRate++; // TODO: Calculate accent rate here.  value in feet per minute.
   if (accentRate > 40) accentRate = -10;
 
+  int accentRateMultiplier = 1;
+  if ( depth > 130 && doubleAccentBelowRec ) accentRateMultiplier = 2;
+
   uint16_t colorValue = WHITE;
 
-  if (accentRate > 30) {
+  if ( accentRate > ( 30 * accentRateMultiplier) ) {
     if (accentBlink) {
       colorValue = BLACK;
       accentBlink = false;
@@ -1030,18 +1012,31 @@ void drawAccentRate(int x, int y) {
       accentBlink = true;
     }
     display.drawBitmap(x, y, up_arrow, 8, 4, colorValue);
+    digitalWrite(alertLEDPin, HIGH);
+
+  } 
+  else {
+    digitalWrite(alertLEDPin, LOW);
   }
 
-  if (accentRate > 20) {
+  if (accentRate > ( 24 * accentRateMultiplier) ) {
     display.drawBitmap(x, y + 4, up_arrow, 8, 4, colorValue);
   }
 
-  if (accentRate > 10) {
+  if (accentRate > ( 18 * accentRateMultiplier)) {
     display.drawBitmap(x, y + 8, up_arrow, 8, 4, colorValue);
   }
 
-  if (accentRate > 0) {
+  if (accentRate > ( 12 * accentRateMultiplier)) {
     display.drawBitmap(x, y + 12, up_arrow, 8, 4, colorValue);
+  }
+
+  if (accentRate > ( 6 * accentRateMultiplier)) {
+    display.drawBitmap(x, y + 16, up_arrow, 8, 4, colorValue);
+  }
+
+  if (accentRate > 0) {
+    display.drawBitmap(x, y + 20, up_arrow, 8, 4, colorValue);
   }
 
   //  display.setCursor( x, y + 18 );
@@ -1050,6 +1045,60 @@ void drawAccentRate(int x, int y) {
   //  display.println(accentRate);
 
 }
+
+void drawAccentRateBars(int x, int y) {
+
+  accentRate++; // TODO: Calculate accent rate here.  value in feet per minute.
+  if ( accentRate > 120 ) accentRate = -10;
+
+  int accentRateMultiplier = 1;
+  if ( depth > 130 && doubleAccentBelowRec ) accentRateMultiplier = 2;
+
+  uint16_t colorValue = WHITE;
+
+  if (accentRate > ( 30 * accentRateMultiplier) ) {
+    if (accentBlink) {
+      colorValue = BLACK;
+      accentBlink = false;
+    } 
+    else {
+      accentBlink = true;
+    }
+    display.fillRect(x + 40, y, 7, 20, colorValue);
+    digitalWrite(alertLEDPin, HIGH);
+
+  } 
+  else {
+    digitalWrite(alertLEDPin, LOW);
+  }
+
+  if (accentRate > ( 24 * accentRateMultiplier) ) {
+    display.fillRect(x + 32, y + 8, 7, 12, colorValue);
+  }
+
+  if (accentRate > ( 18 * accentRateMultiplier) ) {
+    display.fillRect(x + 24, y + 12, 7, 8, colorValue);
+  }
+
+  if (accentRate > ( 12 * accentRateMultiplier) ) {
+    display.fillRect(x + 16, y + 16, 7, 4, colorValue);
+  }
+
+  if (accentRate > ( 6 * accentRateMultiplier) ) {
+    display.fillRect(x + 8, y + 18, 7, 2, colorValue);
+  }
+
+  if (accentRate > 0) {
+    display.fillRect(x, y + 19, 7, 1, colorValue);
+  }
+
+  //  display.setCursor( x, y + 18 );
+  //  display.setTextColor(WHITE);
+  //  display.setTextSize(1);
+  //  display.println(accentRate);
+
+}
+
 
 void drawLogEntry(int position, DateTime date, int diveNumber) {
 
@@ -1099,7 +1148,7 @@ void showAlert(int time, String message) { // time = 0 will ask the user to dism
     alertTime = now.unixtime();
     display.clearDisplay();
     display.display();
-  digitalWrite(alertLEDPin, HIGH);
+    digitalWrite(alertLEDPin, HIGH);
 
     display.setTextSize(1);
     display.setCursor( 0, 20 );
@@ -1147,7 +1196,7 @@ void showAlert(int time, String message) { // time = 0 will ask the user to dism
 
 void killAlert() {
   alertShowing = false;
-    digitalWrite(alertLEDPin, LOW);
+  digitalWrite(alertLEDPin, LOW);
   PITimer1.stop();
   PITimer0.stop();
   display.clearDisplay();
@@ -1196,5 +1245,12 @@ void blinkAlert() {
 //void wakeUp() {
 //    // Just a handler for the pin interrupt.
 //}
+
+
+
+
+
+
+
 
 
