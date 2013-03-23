@@ -7,6 +7,7 @@
  ******************************************************************/
 
 #include <Wire.h>
+#include <EEPROM.h>
 #include <Adafruit_GFX.h>
 //#include "UILibrary.h"
 #include <Adafruit_SSD1306.h>
@@ -17,64 +18,19 @@
 #include <SPI.h>
 //#include "LowPower.h"
 
-#define OLED_RESET 3 // OLED Reset pin
-//#define SHOW_LAYOUT // Uncomment this to see bounding boxes on UI elements - makes laying out items easier.
 
-Adafruit_SSD1306 display(OLED_RESET); // Allocate for the OLED
+// Sensor constants:
+#define SENSOR_CMD_RESET      0x1E
+#define SENSOR_CMD_ADC_READ   0x00
+#define SENSOR_CMD_ADC_CONV   0x40
+#define SENSOR_CMD_ADC_D1     0x00
+#define SENSOR_CMD_ADC_D2     0x10
+#define SENSOR_CMD_ADC_256    0x00
+#define SENSOR_CMD_ADC_512    0x02
+#define SENSOR_CMD_ADC_1024   0x04
+#define SENSOR_CMD_ADC_2048   0x06
+#define SENSOR_CMD_ADC_4096   0x08
 
-// Dive parameter storage
-uint32_t  diveStart            = 0; // This stores the dive start time in unixtime.
-int       diveTime             = 0; // This stores the current dive time in seconds
-int       depth                = 0; // Current Depth
-int       maxDepth             = 0; // Max Depth
-int       nitrogen             = 0; // Current nitrogen saturation level
-int       oxygen               = 0; // Current oxygen saturation level.
-int       temperature          = 75; // Current temp.
-int       batteryLevel         = 128; // Current battery capacity remaining.
-int       displayMode          = 0; // Stores the current display mode: 0 = menu, 1 = dive, 2 = log, 3 = settings. 
-int       currentMenuOption    = 0; // Stores which menu option is being displayed. 0 = dive, 1 = log, 2 = settings.
-int       diveModeDisplay      = 0; // There are multiple dive mode displays. This is the one currently being viewed.
-uint32_t  last8Depths[8];
-int       depthsPointer        = 0;
-int       accentRate           = 0; // This will go away when accent rate is calculated from recent pressure readings.
-
-unsigned long      lLastDebounceTime    = 0;  // the last time the output pin was toggled
-unsigned long      rLastDebounceTime    = 0;  // the last time the output pin was toggled
-
-int       debounceDelay        = 300; // the debounce time; increase if the output flickers
-
-boolean   accentBlink          = false;
-boolean   batteryBlink         = false; 
-boolean   inWater              = false; // Goes true if the water sensor detects that the device is submerged.
-int       inWaterCounter       = 0; //  Counter used to determine if the device is in water.
-boolean   diveMode             = false; // Stores dive mode or surface mode state: 0 = surface mode, 1 = dive mode.
-boolean   alertShowing         = false; // true = there is an alert showing. 
-uint32_t  alertTime            = 0; // Stores time the alert was displayed.
-uint32_t  lastDataRecord       = 0; // Stores the last time data was recorded in unixtime.
-uint32_t  lastColonStateChange = 0; // Stores the last time the clock was updates to that the blink will happen at 1Hz.
-
-DateTime  now;                      // Stores the current date/time for use throughout the code.
-const int sdChipSelect           = 10; // For the SD card breakout board
-const int psChipSelect           = 9; // For the SD card breakout board
-const int alertLEDPin            = 4; // A blinking LED is attached to this pin.
-const int wakeUpPin              = A1; // Pin for water wake up.
-const int rightButton            = 5; // Pin for the right button.
-const int leftButton             = 6; // Pin for the left button.
-
-// These will be user preferences
-boolean   time12Hour           = true; // true = 12 hour time, false = 24 hour time.
-boolean   clockBlink           = true; // true = blink the colon, false = don't blink the colon.
-boolean   ferinheight          = true; // true = Ferinheight, false = Celsius.
-boolean   doubleAccentBelowRec = true; // True = 60ft/min accent rate below recreational limits (130ft). 30ft/min otherwise.
-int       recordInterval       = 30; // This is the inteval in which it will record data to the SD card in minutes.
-
-// Pressure sensor constants:
-const long c1=2216;
-const long c2=4932;
-const long c3=356;
-const long c4=223;
-const long c5=2273;
-const long c6=55;
 
 static unsigned char PROGMEM dive_logo_bmp[] =
 { 
@@ -109,7 +65,6 @@ static unsigned char PROGMEM log_logo_bmp[] =
   B00000111, B00000000, B11100000,
   B00000111, B11000011, B11100000,
   B00110111, B11100111, B11101100,
-
   B00110111, B11100111, B11101100,
   B00110111, B11100111, B11101100,
   B10110111, B11100111, B11101101,
@@ -119,13 +74,10 @@ static unsigned char PROGMEM log_logo_bmp[] =
   B10110111, B11100111, B11101101,
   B10110111, B11100111, B11101101,
   B10110111, B11100111, B11101101,
-
-
   B10110111, B11100111, B11101101,
   B10110111, B11100111, B11101101,
   B10110111, B11100111, B11101101,
   B10110111, B11100111, B11101101,
-
   B10110011, B11100111, B11001101,
   B10111110, B11100111, B01111101,
   B10111111, B00100100, B11111101,
@@ -140,27 +92,22 @@ static unsigned char PROGMEM settings_logo_bmp[] =
   B00000000, B00000000, B00110000,
   B00000000, B00000000, B11111100,
   B00000000, B00000000, B11111100,
-
   B00000000, B00000001, B11001110,
   B00000000, B00000001, B11001110,
   B00000000, B11000000, B11111100,
   B00010001, B11100010, B11111100,
-
   B00111001, B11100111, B00110000,
   B01111111, B11111111, B10000000,
   B00111111, B11111111, B00000000,
   B00011111, B11111110, B00000000,
-
   B00011111, B00111110, B00000000,
   B01111110, B00011111, B10000000,
   B11111100, B00001111, B11000000,
   B11111100, B00001111, B11000000,
-
   B01111110, B00011111, B10000000,
   B00011111, B00111110, B00000000,
   B00011111, B11111110, B00000000,
   B00111111, B11111111, B00000000,
-
   B01111111, B11111111, B10000000,
   B00111001, B11100111, B00000000,
   B00010001, B11100010, B00000000,
@@ -173,12 +120,102 @@ static unsigned char PROGMEM up_arrow[] =
   B01111110, 
   B11111111 };
 
+static unsigned int accent_tone[] = { // Structure: # of tones then alterates freq and duration then a new record.
+  4, 800, 1000, 1200, 1400  
+};
 
+#define OLED_RESET 3 // OLED Reset pin
+#define ACCENT_SAMPLES 10 // The number of samples saved for calculating accent rate. Larger number are more accurate but cause lag in the accent rate reading. 
+//#define SHOW_LAYOUT // Uncomment this to see bounding boxes on UI elements - makes laying out items easier.
+
+// Sensor Variables:
+unsigned int sensorCoefficients[8]; // calibration coefficients
+unsigned long D1;
+unsigned long D2;
+float pressure;
+float temperature;
+float deltaTemp;
+float sensorOffset;
+float sensitivity;
+
+// Hardware Parameters
+const int button1Pin             = 0;  // Pin for the right button.
+const int button2Pin             = 1;  // Pin for the left button.
+const int button3Pin             = 2;  // Pin for a third button - the inital design will not use it but I will have parts on the board to support it.
+const int button4Pin             = 3;  // Pin for a fourth button - the inital design will not use it but I will have parts on the board to support it.
+const int oledReset              = 4;
+const int alertLEDPin            = 5;  // A blinking LED is attached to this pin.
+const int chargingPin            = 6;
+
+const int sensorSelectPin        = 9;  // Sensor device select
+const int sdChipSelect           = 10; // For the SD card breakout board
+
+const int batteryLevelPin        = A0; // Pin for monitoring the battery voltage.
+const int wakeUpPin              = A1; // Pin for water wake up.
+const int speakerPin             = A8;
+const int fakeDepthPin           = A9; // Connect a potentiameter to this pin for testing and debugging
+const int profileSize            = 89; // The number of depths that are saved to EEPROM for the dive profile graph.
+
+// System Parameters
+Adafruit_SSD1306 display(oledReset); // Allocate for the OLED
+DateTime      now;                      // Stores the current date/time for use throughout the code.
+int           batteryLevel         = 128; // Current battery capacity remaining.
+int           displayMode          = 0; // Stores the current display mode: 0 = menu, 1 = dive, 2 = log, 3 = settings. 
+int           currentMenuOption    = 0; // Stores which menu option is being displayed. 0 = dive, 1 = log, 2 = settings.
+int           diveModeDisplay      = 0; // There are multiple dive mode displays. This is the one currently being viewed.
+float         altitudeCompensation = 0.0f;
+boolean       altitudeCompSet      = false;
+unsigned long lLastDebounceTime    = 0;  // the last time the output pin was toggled
+unsigned long rLastDebounceTime    = 0;  // the last time the output pin was toggled
+int           debounceDelay        = 300; // the debounce time; increase if the output flickers
+boolean       accentBlink          = false; // Store for the accent indicator blink state.
+boolean       batteryBlink         = false; // Store for the battery indicator blink state.
+boolean       inWater              = false; // Goes true if the water sensor detects that the device is submerged.
+int           inWaterCounter       = 0; //  Counter used to determine if the device is in water.
+boolean       alertShowing         = false; // true = there is an alert showing. 
+uint32_t      alertTime            = 0; // Stores time the alert was displayed.
+uint32_t      lastDataRecord       = 0; // Stores the last time data was recorded in unixtime.
+uint32_t      lastColonStateChange = 0; // Stores the last time the clock was updates to that the blink will happen at 1Hz.
+uint32_t      lastProfileRecord    = 0; // The real time that the last profile record was saved.
+const int     numberOfDiveDisplays = 3; // The number of dive displays (zero based).
+int           toneCounter          = 0;
+boolean       toneActive           = false;
+int           tonePlaying          = 0;
+
+// Dive parameter storage
+boolean       diveMode             = false; // Stores dive mode or surface mode state: 0 = surface mode, 1 = dive mode.
+uint32_t      diveStart            = 0; // This stores the dive start time in unixtime.
+int           diveTime             = 0; // This stores the current dive time in seconds
+float         depth                = 0.0f; // Current Depth
+int           maxDepth             = 0; // Max Depth
+int           nitrogen             = 0; // Current nitrogen saturation level
+int           oxygen               = 0; // Current oxygen saturation level.
+float         depths[ACCENT_SAMPLES];               // Stores the last 10 depth reading.
+unsigned long depthMicros[ACCENT_SAMPLES];      // Stores the times of the last ten depth readings (to calculate accent rate).
+int           profilePointer       = 0; // The computer saves depth data to EEPROM for the graph function.  This is the pointer to the current location data is being saved. 
+int           profileSamples       = 0;
+int           depthsPointer        = 0; // Pointer for the depths and depthMicros variables. 
+float         accentRate           = 0; // This will go away when accent rate is calculated from recent pressure readings.
+
+// User Preferences
+boolean       time12Hour           = true; // true = 12 hour time, false = 24 hour time.
+boolean       clockBlink           = true; // true = blink the colon, false = don't blink the colon.
+boolean       ferinheight          = true; // true = Ferinheight, false = Celsius.
+boolean       meters               = false; // true = meters, false = feet.
+boolean       doubleAccentBelowRec = true; // True = 60ft/min accent rate below recreational limits (130ft). 30ft/min otherwise.
+int           recordInterval       = 15; // This is the inteval in which it will record data to the SD card in minutes.
+int           profileInterval      = 0; // The interval that dive profile depths are recorded to EEPROM (for the graphing funtion). 
+boolean       playAccentTooFastTone = true;
 // *******************************************************************
 // ***************************** Setup *******************************
 // *******************************************************************
 
-void setup()   {                
+void setup()   {  
+
+  // Read the preferenced from the EEPROM
+  readPrefereces();
+
+  // Start the serial ports.
   Serial.begin(115200);
   Wire.begin();
 
@@ -197,39 +234,68 @@ void setup()   {
   lastColonStateChange = lastDataRecord;
   diveStart = now.unixtime();
 
-
+  // Set up the warning LED Pin
   pinMode(alertLEDPin, OUTPUT); // Warning LED
-  digitalWrite(alertLEDPin, LOW);
+  digitalWrite(alertLEDPin, HIGH);
+
+  // Set up the SD card pin select
+  pinMode(sdChipSelect, OUTPUT);
+  digitalWrite(sdChipSelect, HIGH);
+
+  // Set up the sensor SPI select Pin
+  pinMode(sensorSelectPin, OUTPUT);
+  digitalWrite(sensorSelectPin, HIGH);
+  SPI.begin(); //see SPI library details on arduino.cc for details
+  SPI.setBitOrder(MSBFIRST);
+  SPI.setClockDivider(SPI_CLOCK_DIV2);
+  delay(10);
+
+  // Read sensor coefficients - these will be used to convert sensor data into pressure and temp data
+  ms5803_reset_sensor(); // resetting the sensor on startup is impoortant
+  for (int i = 0; i < 8; i++ ){ 
+    sensorCoefficients[ i ] = ms5803_read_coefficient( i );  // read coefficients
+    delay(10);
+  }
+
+  // Check the CRC data returned from the sensor to ensure data integrity.
+  unsigned char n_crc;
+  unsigned char p_crc = sensorCoefficients[ 7 ];
+
+  n_crc = ms5803_crc4( sensorCoefficients ); // calculate the CRC
+  // If the calculated CRC does not match the returned CRC, then there is a data integrity issue. 
+  // Check the connections for bad solder joints or "flakey" cables. If this issue persists, you may have a bad sensor.
+  if ( p_crc != n_crc ) {
+    showAlert ( 0, "The sensor CRC check failed. There is a data integrity issue with the sensor." );
+  }
 
   //  Setup the user input buttons.
-  pinMode(rightButton,INPUT); // right button
-  pinMode(leftButton,INPUT); // left button
-  attachInterrupt(rightButton, rightPressed, FALLING);
-  attachInterrupt(leftButton, leftPressed, FALLING);
+  pinMode( button1Pin, INPUT_PULLUP ); // right button
+  pinMode( button2Pin, INPUT_PULLUP ); // left button
+  attachInterrupt( button1Pin, rightPressed, FALLING );
+  attachInterrupt( button2Pin, leftPressed, FALLING );
 
   // Wake up pin is also the "in water" pin
-  pinMode(wakeUpPin, INPUT);   
-
-  // Setup Pressure Sensor
-  pinMode(psChipSelect, OUTPUT);
+  pinMode( wakeUpPin, INPUT );   
 
   // initialize access to the SD card
-  Serial.print("Initializing SD card...");
+  Serial.print( "Initializing SD card..." );
   // make sure that the default chip select pin is set to
   // output, even if you don't use it:
-  pinMode(sdChipSelect, OUTPUT);
 
   // see if the card is present and can be initialized:
-  if (!SD.begin(sdChipSelect)) {
-    Serial.println("Card failed, or not present");
+  if ( !SD.begin( sdChipSelect ) ) {
+    Serial.println( "Card failed, or not present" );
     // don't do anything more:
-    showAlert (0, "Failed to initialize the SD card.  Please make sure the card isinstalled correctly.");
+    showAlert( 0, "Failed to initialize the SD card.  Please make sure the card isinstalled correctly." );
   } 
   else {
     Serial.println("card initialized.");
   }
-  //showAlert (0, "You are severly bent and about to die. Youshould surface while you can.");
+  //showAlert (0, "You are severly bent and about to die. Youshould surface while you still can.");
 
+// Was a nice idea but it seems that these timers interfere with other things happening...
+//  PITimer0.period(.1);
+//  PITimer0.start(cycleTone); 
 
   // Give everything a half sec to settle
   delay(500);
@@ -243,33 +309,64 @@ void setup()   {
 
 void loop() {
 
+  // Fake values for debugging
   nitrogen++;
   oxygen++;
   if (nitrogen > 255) nitrogen = 0;
   if (oxygen > 255) oxygen = 0;
 
+  // Read real time clock.
   now = DateTime(Teensy3Clock.get());
 
-  // Read Depth 
-  depth = analogRead(A0) / 2;
+  // Read temp and pressure from the sensor
+  // TODO: Consider reducing the read frequency to reduce power consumption. 
+  D1 = ms5803_cmd_adc( SENSOR_CMD_ADC_D1 + SENSOR_CMD_ADC_4096);     // read uncompensated pressure
+  D2 = ms5803_cmd_adc( SENSOR_CMD_ADC_D2 + SENSOR_CMD_ADC_4096);    // read uncompensated temperature
+  // calculate 1st order pressure and temperature correction factors (MS5803 1st order algorithm)
+  deltaTemp = D2 - sensorCoefficients[5] * pow( 2, 8 );
+  sensorOffset = sensorCoefficients[2] * pow( 2, 16 ) + ( deltaTemp * sensorCoefficients[4] ) / pow( 2, 7 );
+  sensitivity = sensorCoefficients[1] * pow( 2, 15 ) + ( deltaTemp * sensorCoefficients[3] ) / pow( 2, 8 );
+  // calculate 2nd order pressure and temperature (MS5803 2st order algorithm)
+  temperature = ( 2000 + (deltaTemp * sensorCoefficients[6] ) / pow( 2, 23 ) ) / 100;
+  pressure = ( ( ( ( D1 * sensitivity ) / pow( 2, 21 ) - sensorOffset) / pow( 2, 15 ) ) / 10 ) ; // result is in millibars (mbars)
+
+  // The pressure at sea level is 1013.25 mbars so if the pressure is lower, then the user is not at sea level and an altitude compensation factor is needed.
+  // This needs to be improved to take the lowest reading since power up (not just the first) for situations when the unit does not power up until the user is in the water.
+  if (pressure < 1013.25 && !altitudeCompSet) { 
+    altitudeCompensation = 1013.25 - pressure;
+    altitudeCompSet = true;
+  }
+
+  // calculate depth
+  if (meters) depth = ( ( pressure + altitudeCompensation ) - 1013.25 ) / 100.52; // There are 100.52 mbars per meter of depth.
+  else depth = ( ( pressure + altitudeCompensation ) - 1013.25 ) / 30.64; // There are 30.64 mbars per foot of depth.
+
+  // If there is a pressure rebound, make sure the depth does not go negative.  This usually only happens when manually pressing on the sensor while testing. 
+  if (depth < 0.0) depth = 0.0;
+
+  // Convert the temp to ferinheight if the user has selected that unit.
+  if (ferinheight) temperature = ( (temperature * 9.0 ) / 5.0 ) + 32.0;
+
+  // This code will read a potentiometer and over ride the depth reading of the sensor if it is larger than the sensor's reading. This is used for testing and debugging. 
+  float fakeDepthReading = analogRead(fakeDepthPin) / 30.0f;
+  if (fakeDepthReading > depth) depth = fakeDepthReading;
+
+  // Records the last ten depth reading for accent calculations.
+  depths[depthsPointer] = depth;
+  depthMicros[depthsPointer] = micros();
+  depthsPointer++;
+  if (depthsPointer > ACCENT_SAMPLES) depthsPointer = 0;
+
   // Set Max Depth
   if (depth > maxDepth) maxDepth = depth;
-
-  last8Depths[depthsPointer] = depth;
-  depthsPointer++;
-  if (depthsPointer > 7) depthsPointer = 0;
 
   // Fake battery level for testing.
   //  batteryLevel -= 1;
   //  if (batteryLevel < 0) batteryLevel = 255;
 
   // In water detection.  This will tell if the user is in the water. Not exactly sure what it will be used for at this point but the code is here.
-  if (analogRead(A1) == 0) {
-    inWaterCounter++;
-  } 
-  else {
-    inWaterCounter--;
-  }
+  if (analogRead(A1) == 0) inWaterCounter++;
+  else inWaterCounter--;
 
   if (inWaterCounter > 100) {
     inWater = true;
@@ -281,20 +378,16 @@ void loop() {
     inWaterCounter = 0;
   }
 
-  //  Serial.print("In water counter: ");
-  //  Serial.print(inWaterCounter);
-  //  Serial.print(" In Water Flag: ");
-  //  Serial.println(inWater);
-
   // Dive start detection.  When the user decends below 4 feet, then the dive will start. 
   if (diveMode == false && depth > 3) {
-    diveMode = true;
-    diveStart = now.unixtime(); // reset the timer.
-    diveTime = 0;
-    maxDepth = 0;
-    inWater = true;  // If you are 4 feet under water, it's safe to assume that you are in the water...
+    diveMode = true; // Set global "dive/surface" mode flag
+    diveStart = now.unixtime(); // reset the dive timer.
+    diveTime = 0; 
+    maxDepth = 0; // reset the max depth.
+    inWater = true;  // If you are 4 feet under water, it's safe to assume that you are in the water, if this flag has not already been set...
     inWaterCounter = 150;
-    displayMode = 1; //  Since this conditional is only called when a dive starts, then put the display into dive mode if it's not already.
+    displayMode = 1; //  Since this conditional is only called when a dive starts, put the display into dive mode if it isn't already.
+    clearDiveProfile();
   } 
 
   // TODO: Probably need something similar to the inWaterCounter to prevent multiple dive start records if the user is hanging out between 3 and 4 feet.
@@ -302,86 +395,58 @@ void loop() {
     diveMode = false;
   }
 
+  // Things to do when in dive mode.
   if (diveMode) {
-    diveTime = now.unixtime() - diveStart;
-    logData();
+    diveTime = now.unixtime() - diveStart; 
+    logData();  // Data will only log when (diveTime % recordInterval == 0)
+    recordDiveProfileValue();
+    // TODO: Calculate nitrogen
+    // TODO: Calculate oxygen
   }
 
+  calculateAccentRate();
+
+  // if there is no alert condition then show the normal display.
+  // TODO: The way this is currently written, the display is constantly being updated. This is not efficient. 
+  // TODO: Need to change this so only areas of the screen that need updating are updated.  This will likely improve battery performance. 
   if (!alertShowing) {
     display.clearDisplay();
+    display.setTextColor(WHITE);
 
     // 0 = menu, 1 = dive, 2 = log, 3 = settings
-    if (displayMode == 0) {
-      // Menu Display
+    if (displayMode == 0) { // Menu Display
       drawMenu();
     } 
-    else if (displayMode == 1) {
-      // Dive Display
+    else if (displayMode == 1) { // Dive Display
+      // TODO: Make it easier to add dive display modes.
       if (diveModeDisplay == 0) {
-        drawDiveDiveDiplayA();
+        drawDiveDisplayA();
       } 
       else if (diveModeDisplay == 1) {
-        drawDiveDiveDiplayB();
-      }  
+        drawDiveDisplayB();
+      } 
+      else if (diveModeDisplay == 2) {
+        drawDiveDisplayC(); // TODO: add a low power view - a view that has the minimum number of "on" pixels.  OLED displays only power on pixels.  Consider reducing sensor read freq for this view.
+      } 
       else {
-        drawDiveDiveDiplayC();
+        drawDiveDisplayD();
       }
-
     }
-    else if (displayMode == 2) {
-      // Log Book Display
+    else if (displayMode == 2) { // Log Book Display
       drawLogBook();
     }
-
-    else if (displayMode == 3) {
-      // Settings Display
+    else if (displayMode == 3) { // Settings Display
       drawSettings();
     }
     display.display();
   }
 }
 
-
-void drawLogBook() {
-
-  display.fillRect(0, 0, 128, 9, WHITE);
-
-  display.setTextColor(BLACK);
-  display.setTextSize(1);
-  display.setCursor(40, 1);
-  display.print("Log Book");
-
-  display.setTextColor(WHITE);
-  display.setCursor(0, 10);
-  display.print("Under construction");
-
-  drawButtonOptions("MENU", ">>", true, false);
-
-
-}
-
-void drawSettings() {
-  display.fillRect(0, 0, 128, 9, WHITE);
-
-  display.setTextColor(BLACK);
-  display.setTextSize(1);
-  display.setCursor(40, 1);
-  display.print("Settings");
-
-  display.setTextColor(WHITE);
-  display.setCursor(0, 10);
-  display.print("Under construction");
-
-  drawButtonOptions("MENU", ">>", true, false);
-}
+// *******************************************************************
+// **************************** Main Menu ****************************
+// *******************************************************************
 
 void drawMenu() {
-  display.setTextColor(WHITE);
-
-  //  drawClock(0, 0, 9, 1, false); // Parameters: x, y, size, bold
-  //  drawTemp(97, 0, 9, 1, false);
-  //  drawBattery(50, 5, 20, false);
-  //drawTimeTempBar(0, 0, 128, true);
 
   display.setTextColor(WHITE);
 
@@ -408,24 +473,16 @@ void drawMenu() {
   display.setTextSize(1);
   display.println("MAIN MENU:");
 
-  //
-  //  display.fillRect(0, 55, 19, 9, WHITE);
-  //  display.setTextColor(BLACK);
-  //  display.setCursor( 1, 56 );
-  //  display.setTextSize(1);
-  //  display.println("SEL");
-
   drawButtonOptions("SEL", ">>", true, true);
-
 
   display.setTextColor(WHITE);
 
+  // Show essensial data if the user is in dive mode. 
   if (diveMode) {
     drawDepth( depth, 0, 26, 9, 1, true, "Depth:" ); // Parameters: depth, x, y, size, bold, header string
-    //drawDiveTime(diveTime, 71, 26, 1, true); // Parameters: Time in seconds, x, y, size, bold
+    drawAccentRateArrows(120, 20); // Parameters: x, y
   }  
 }
-
 
 // *******************************************************************
 // ************************ User Interactions ************************
@@ -434,7 +491,6 @@ void drawMenu() {
 void rightPressed() {
 
   // TODO: Replace debounce code with Debounce library since it provides more functionality.
-
   if ((millis() - rLastDebounceTime) < debounceDelay) {
     return;
   }
@@ -452,7 +508,7 @@ void rightPressed() {
 
   if (displayMode == 1) { // Dive
     diveModeDisplay++;
-    if ( diveModeDisplay > 2 ) diveModeDisplay = 0;
+    if ( diveModeDisplay > numberOfDiveDisplays ) diveModeDisplay = 0;
   }
 }
 
@@ -483,72 +539,57 @@ void leftPressed() {
 
   if (displayMode == 3) { // Settings
     displayMode = 0; 
+    writePreferences(); // save the preferences to the EEPROM
     return;
   }
-
-
 }
 
 // *******************************************************************
 // *********************** Dive Mode Displays ************************
 // *******************************************************************
 
-
-void drawDiveDiveDiplayA() {
-
-  display.setTextColor(WHITE);
+void drawDiveDisplayA() {
 
   drawDiveTime(diveTime, 62, 0, 9, 2, false); // Parameters: Time in seconds, x, y, size, bold
-  //  drawClock(61, 0, 1, false); // Parameters: x, y, size, bold
   drawDepth( maxDepth, 14, 31, 9, 2, false, "Max:"); // Parameters: depth, x, y, size, bold, header string
   drawDepth( depth, 6, 0, 9, 3, true, "Depth:"); // Parameters: depth, x, y, size, bold, header string
-  //  drawTemp(92, 0, 1, false);
-  // drawAccentRate(96, 31);
   drawAccentRateBars(71, 24);
   drawAccentRate(70, 45, 1, true, true);
-  drawTimeTempBar(14, 56, 100, true);
-
   drawSaturation(nitrogen, true);
   drawSaturation(oxygen, false);
-
   drawButtonOptions("^^", ">>", true, true);
-
 }
 
-void drawDiveDiveDiplayB() {
+void drawDiveDisplayB() {
 
-  if (depth > maxDepth) maxDepth = depth;
-  display.setTextColor(WHITE);
-
-  drawDiveTime(diveTime, 56, 28, 9, 2, false); // Parameters: Time in seconds, x, y, size, bold
-  drawDepth( maxDepth, 10, 28, 9, 2, false, "Max:"); // Parameters: depth, x, y, size, bold, header string
-  drawDepth( depth, 10, 2, 9, 2, true, "Depth:"); // Parameters: depth, x, y, size, bold, header string
-  drawAccentRateArrows(96, 0);
-
-  drawTimeTempBar(14, 55, 100, true);
-
-  drawSaturation(nitrogen, true);
-  drawSaturation(oxygen, false);
-
-  drawButtonOptions("^^", ">>", true, true);
+  drawDiveTime(diveTime, 56, 28, 9, 2, false); // Parameters: Time in seconds, x, y, heading offset, size, bold
+  drawDepth( maxDepth, 10, 28, 9, 2, false, "Max:"); // Parameters: depth, x, y, heading offset, size, bold, header string
+  drawDepth( depth, 10, 2, 9, 2, true, "Depth:"); // Parameters: depth, x, y, heading offset, size, bold, header string
+  drawAccentRateArrows(96, 0); // Parameters: x, y
+  drawSaturation(nitrogen, true); // Parameters: value and a boolean to indicate nitrogen or oxygen (true = nitrogen, false = oxygen)
+  drawSaturation(oxygen, false); // Parameters: value and a boolean to indicate nitrogen or oxygen (true = nitrogen, false = oxygen)
+  drawButtonOptions("^^", ">>", true, true); // Draws the button bar at the bottom of the screen. Parameters: Left button title, right button title, show time/temp bar, show battery.
 
 }
 
 // ++++++ DEPTH ONLY ++++++
-void drawDiveDiveDiplayC() {
+void drawDiveDisplayC() {
 
-  if (depth > maxDepth) maxDepth = depth;
-  display.setTextColor(WHITE);
-
-  drawDepth( depth, 20, 0, 13, 5, true, "Depth:"); // Parameters: depth, x, y, size, bold, header string
-  drawAccentRateArrows(110, 16);
-
-  drawSaturation(nitrogen, true);
-  drawSaturation(oxygen, false);
-
-  drawButtonOptions("^^", ">>", true, true);
-
+  drawDepth( depth, 20, 0, 13, 5, true, "Depth:"); // Parameters: depth, x, y, heading offset, size, bold, header string
+  drawAccentRateArrows(110, 16); // Parameters: x, y
+  drawSaturation(nitrogen, true); // Parameters: value and a boolean to indicate nitrogen or oxygen (true = nitrogen, false = oxygen)
+  drawSaturation(oxygen, false); // Parameters: value and a boolean to indicate nitrogen or oxygen (true = nitrogen, false = oxygen)
+  drawButtonOptions("^^", ">>", false, true); // Draws the button bar at the bottom of the screen. Parameters: Left button title, right button title, show time/temp bar, show battery.
 }
+
+// ++++++ Dive Profile View ++++++
+void drawDiveDisplayD() {
+  drawDiveProfileGraph( 0, 0 );
+  drawDepth( depth, 91, 0, 9, 1, true, "Depth:"); // Parameters: depth, x, y, heading offset, size, bold, header string
+  drawAccentRateArrows(120, 22); // Parameters: x, y
+  drawButtonOptions("^^", ">>", true, true); // Draws the button bar at the bottom of the screen. Parameters: Left button title, right button title, show time/temp bar, show battery.
+}
+
 
 
 // *******************************************************************
@@ -572,11 +613,14 @@ void logData() {
     if (dataFile) {
       dataFile.println(dataString);
       dataFile.close();
-      // print to the serial port too:
+      // print to the serial port:
+      //Serial.print("Logging Data: ");
       //Serial.println(dataString);
+
     }  
     else {
       Serial.println("error opening datalog.txt");
+      showAlert (0, "Error opening data log file. Check the SD card.");
     } 
   }
 }
@@ -608,6 +652,10 @@ void drawButtonOptions(String left, String right, boolean showTimeTemp, boolean 
   // (leftWidth + rightWidth + 4);
   if (showTimeTemp) {
     drawTimeTempBar(leftWidth + 3, 55, 128 - ( ( leftWidth + 3 ) + ( rightWidth + 3 ) ) , showBattery);
+  } 
+  else if (showBattery) {
+    // TODO: This this appropiately dynamic.
+    drawBattery(54, 56, 20, false); // if color = false, battey is white, true = black battery.
   }
 }
 
@@ -793,10 +841,12 @@ void drawTemp(int x, int y, int headingGap, int size, boolean bold) {
 
   int tempWidth = 10 * size;
 
-  if (temperature > 9) {
+  int tempInt = temperature;
+
+  if (tempInt > 9) {
     tempWidth = 16 * size;
   }
-  if (temperature > 99) {
+  if (tempInt > 99) {
     tempWidth = 21 * size;
   }
 
@@ -806,7 +856,7 @@ void drawTemp(int x, int y, int headingGap, int size, boolean bold) {
 
   display.setTextSize(size);
   display.setCursor( ( ( width - tempWidth ) / 2 ) + x + 1, y + headingGap );
-  String depthString =  String(temperature);
+  String depthString =  String(tempInt);
   depthString.replace( '0', 'O' );
 
   if (ferinheight ) {
@@ -868,13 +918,14 @@ void drawTimeTempBar( int x, int y, int w, boolean showBattery ) {
   display.setTextColor(BLACK);
   display.setTextSize(1);
 
+  int tempInt = temperature;
   display.setCursor( x + 1, y + 1 );
   String timeString = createTimeString(true);
   int timeWidth = ( timeString.length() * 6 ) - 1;
   display.print(timeString);
 
   // Draw Temp
-  String tempString = String(temperature);
+  String tempString = String(tempInt);
   tempString.replace( '0', 'O' );
 
   if (ferinheight ) {
@@ -892,21 +943,21 @@ void drawTimeTempBar( int x, int y, int w, boolean showBattery ) {
   display.setCursor( ( x + w - 13 ), y - 1 );
   display.write(9);
 
-  Serial.print ("x = ");
-  Serial.print (x);
-  Serial.print (" w = ");
-  Serial.print (w);
-  Serial.print (" timeWidth = ");
-  Serial.print (timeWidth);
-  Serial.print (" tempWidth = ");
-  Serial.print (tempWidth);
+  //  Serial.print ("x = ");
+  //  Serial.print (x);
+  //  Serial.print (" w = ");
+  //  Serial.print (w);
+  //  Serial.print (" timeWidth = ");
+  //  Serial.print (timeWidth);
+  //  Serial.print (" tempWidth = ");
+  //  Serial.print (tempWidth);
 
 
   // Draw Battery
   if (showBattery) {
     int batteryWidth = w - ( timeWidth + tempWidth + 16);
-    Serial.print (" batteryWidth = ");
-    Serial.println (batteryWidth);
+    //    Serial.print (" batteryWidth = ");
+    //    Serial.println (batteryWidth);
 
     drawBattery( x + timeWidth + 8, y + 1, batteryWidth, true);
   }
@@ -960,43 +1011,109 @@ void drawDepth(int value, int x, int y, int headingGap, int size, boolean bold, 
 // ************************ Draw Accent Rate *************************
 // *******************************************************************
 
+void calculateAccentRate() {
+
+  int           samples     = ACCENT_SAMPLES;
+  int           pointer     = depthsPointer;
+  unsigned long totalTime   = 0;
+  unsigned long lastTime    = 0;
+  float         totalDepth  = 0; 
+  float         lastDepth   = 0; 
+
+  for (int x = 0; x < ACCENT_SAMPLES; x++) {
+    if ( depthMicros[pointer] == 0 ) {
+      samples--;
+    } 
+    else {
+      if ( lastTime == 0.0 ) {
+        lastTime = depthMicros[pointer];
+      } 
+      else {
+        totalTime += (depthMicros[pointer] - lastTime) ;
+        lastTime = depthMicros[pointer];
+      }
+      if ( lastDepth == 0.0 ) {
+        lastDepth = depths[pointer];
+      } 
+      else {
+        totalDepth += (lastDepth - depths[pointer]);
+        lastDepth = depths[pointer];
+      }
+    }
+    pointer++;
+    if ( pointer > ACCENT_SAMPLES ) pointer = 0;
+  }
+
+  if (samples == 0) {
+    accentRate = 0;
+    digitalWrite(alertLEDPin, HIGH);
+    return;
+  }
+
+  accentRate = (totalDepth / ( totalTime / 1000000.0f ) ) * 60.0;
+
+  int accentRateMultiplier = 1;
+  if ( depth > 130 && doubleAccentBelowRec ) accentRateMultiplier = 2;
+
+  // Activate LED
+  if ( accentRate > ( 30 * accentRateMultiplier) ) {
+    if (diveMode) {
+      digitalWrite(alertLEDPin, LOW);
+      if (!toneActive) {
+        tonePlaying = 0;
+        toneActive = true;
+      }  
+    }
+  } 
+  else {
+    digitalWrite(alertLEDPin, HIGH);
+  }
+
+  Serial.print("Total Depth = ");
+  Serial.print(totalDepth);
+  Serial.print(" Total Time = ");
+  Serial.print(totalTime);
+  Serial.print(" Accent Rate (ft/min) = ");
+  Serial.println(accentRate);
+
+}
+
 void drawAccentRate(int x, int y, int textSize, boolean background, boolean black) {
 
   uint8_t color = WHITE;
   if (black) color = BLACK;
 
-if (background) {
-  display.fillRect(x,y,49,9, WHITE); 
-}
+  if (background) {
+    display.fillRect(x,y,49,9, WHITE); 
+  }
   display.setCursor( x + 1, y + 1 );
   display.setTextColor(color);
   display.setTextSize(textSize);
 
-  if ( accentRate < 10 && accentRate > -10 ) {
+  if ( accentRate < 10.0 && accentRate > -10.0 ) {
     display.print(" ");
   }
-  if ( accentRate < 100 && accentRate > -100 ) {
+  if ( accentRate < 100.0 && accentRate > -100.0 ) {
     display.print(" ");
   }
-  if( accentRate == 0 ) {
+  if ( accentRate < 1.0 && accentRate > -1.0 ) {
     display.print(" ");
   } 
-  else if (accentRate > 0) {
+  else if (accentRate > 0.0 ) {
     display.print("+");
   }
 
-  display.print(accentRate);
+  int accentInt = accentRate;
+  String accentString = String(accentInt);
+  accentString.replace( '0', 'O' );
+
+  display.print(accentString);
 
   display.print("ft/m");
-
-
 
 }
 
 void drawAccentRateArrows(int x, int y) {
-
-  accentRate++; // TODO: Calculate accent rate here.  value in feet per minute.
-  if (accentRate > 40) accentRate = -10;
 
   int accentRateMultiplier = 1;
   if ( depth > 130 && doubleAccentBelowRec ) accentRateMultiplier = 2;
@@ -1012,12 +1129,7 @@ void drawAccentRateArrows(int x, int y) {
       accentBlink = true;
     }
     display.drawBitmap(x, y, up_arrow, 8, 4, colorValue);
-    digitalWrite(alertLEDPin, HIGH);
-
   } 
-  else {
-    digitalWrite(alertLEDPin, LOW);
-  }
 
   if (accentRate > ( 24 * accentRateMultiplier) ) {
     display.drawBitmap(x, y + 4, up_arrow, 8, 4, colorValue);
@@ -1038,18 +1150,9 @@ void drawAccentRateArrows(int x, int y) {
   if (accentRate > 0) {
     display.drawBitmap(x, y + 20, up_arrow, 8, 4, colorValue);
   }
-
-  //  display.setCursor( x, y + 18 );
-  //  display.setTextColor(WHITE);
-  //  display.setTextSize(1);
-  //  display.println(accentRate);
-
 }
 
 void drawAccentRateBars(int x, int y) {
-
-  accentRate++; // TODO: Calculate accent rate here.  value in feet per minute.
-  if ( accentRate > 120 ) accentRate = -10;
 
   int accentRateMultiplier = 1;
   if ( depth > 130 && doubleAccentBelowRec ) accentRateMultiplier = 2;
@@ -1065,11 +1168,6 @@ void drawAccentRateBars(int x, int y) {
       accentBlink = true;
     }
     display.fillRect(x + 40, y, 7, 20, colorValue);
-    digitalWrite(alertLEDPin, HIGH);
-
-  } 
-  else {
-    digitalWrite(alertLEDPin, LOW);
   }
 
   if (accentRate > ( 24 * accentRateMultiplier) ) {
@@ -1091,19 +1189,7 @@ void drawAccentRateBars(int x, int y) {
   if (accentRate > 0) {
     display.fillRect(x, y + 19, 7, 1, colorValue);
   }
-
-  //  display.setCursor( x, y + 18 );
-  //  display.setTextColor(WHITE);
-  //  display.setTextSize(1);
-  //  display.println(accentRate);
-
 }
-
-
-void drawLogEntry(int position, DateTime date, int diveNumber) {
-
-}
-
 
 // *******************************************************************
 // ************************* Utility Methods *************************
@@ -1148,8 +1234,9 @@ void showAlert(int time, String message) { // time = 0 will ask the user to dism
     alertTime = now.unixtime();
     display.clearDisplay();
     display.display();
-    digitalWrite(alertLEDPin, HIGH);
+    digitalWrite(alertLEDPin, LOW);
 
+    display.setTextColor(WHITE);
     display.setTextSize(1);
     display.setCursor( 0, 20 );
     display.print(message);
@@ -1184,24 +1271,20 @@ void showAlert(int time, String message) { // time = 0 will ask the user to dism
   PITimer1.start(blinkAlert); 
 
   if (time > 0) {
-    //    if (now.unixtime() > alertTime + time) {
-    //      display.clearDisplay();
-    //      display.display();
-    //      alertShowing = false;
-    //    }  
-    PITimer0.period(time);
-    PITimer0.start(killAlert); 
+    PITimer2.period(time);
+    PITimer2.start(killAlert); 
   }
 }
 
 void killAlert() {
   alertShowing = false;
-  digitalWrite(alertLEDPin, LOW);
+  digitalWrite(alertLEDPin, HIGH);
   PITimer1.stop();
-  PITimer0.stop();
+  PITimer2.stop();
   display.clearDisplay();
   display.display();
 }
+
 
 void blinkAlert() {
   //PITimer1.clear();
@@ -1227,6 +1310,8 @@ void blinkAlert() {
   display.display();
 }
 
+// The low power libraries have not been ported to the Teensy platform yet... This is the code to enable low power mode when they are ported.  
+// When they are ported, need to investigate if it's possible to put the processor in a lower power state while still remaining functional in the case of a low battery situation. 
 //void enterSleep() {
 //    // Allow wake up pin to trigger interrupt on low.
 //    attachInterrupt(0, wakeUp, LOW);
@@ -1247,10 +1332,282 @@ void blinkAlert() {
 //}
 
 
+// *******************************************************************
+// ********************** MS5803 Sensor Methods **********************
+// *******************************************************************
 
+// Sends a power on reset command to the sensor. Should be done at powerup and maybe on a periodic basis (needs to confirm with testing).
+void ms5803_reset_sensor() {
+  digitalWrite(sensorSelectPin, LOW);
+  SPI.setDataMode(SPI_MODE3); 
+  SPI.transfer(SENSOR_CMD_RESET);
+  delay(10); 
+  digitalWrite(sensorSelectPin, HIGH);
+  delay(5);
+}
 
+// These sensors have coefficient values stored in ROM that are used to convert the raw temp/pressure data into degrees and mbars.  
+// This method reads the coefficient at the index value passed.  Valid values are 0-7. See datasheet for more info.
+unsigned int ms5803_read_coefficient(uint8_t index) {
+  unsigned int result = 0;   // result to return
 
+  digitalWrite(sensorSelectPin, LOW);
+  SPI.setDataMode(SPI_MODE3); 
 
+  // send the device the coefficient you want to read:
+  SPI.transfer(0xA0 + ( index * 2 ) );
 
+  // send a value of 0 to read the first byte returned:
+  result = SPI.transfer(0x00);
+  result = result << 8;
+  result |= SPI.transfer(0x00); // and the second byte
+
+  // take the chip select high to de-select:
+  digitalWrite(sensorSelectPin, HIGH);
+  //Serial.println (result);
+  return(result);
+}
+
+// Coefficient at index 7 is a four bit CRC value for verifying the validity of the other coefficients.  
+// The value returned by this method should match the coefficient at index 7. If not there is something works with the sensor or the connection. 
+unsigned char ms5803_crc4(unsigned int n_prom[]) {
+  int cnt;
+  unsigned int n_rem;
+  unsigned int crc_read;
+  unsigned char  n_bit;
+  n_rem = 0x00;
+  crc_read = sensorCoefficients[7];
+  sensorCoefficients[7] = ( 0xFF00 & ( sensorCoefficients[7] ) );
+
+  for (cnt = 0; cnt < 16; cnt++)
+  { // choose LSB or MSB
+    if ( cnt%2 == 1 ) n_rem ^= (unsigned short) ( ( sensorCoefficients[cnt>>1] ) & 0x00FF ); 
+    else n_rem ^= (unsigned short) ( sensorCoefficients[cnt>>1] >> 8 );
+    for ( n_bit = 8; n_bit > 0; n_bit-- )
+    {
+      if ( n_rem & ( 0x8000 ) )
+      {
+        n_rem = ( n_rem << 1 ) ^ 0x3000;
+      }
+      else {
+        n_rem = ( n_rem << 1 );
+      }
+    } 
+  }
+
+  n_rem = ( 0x000F & ( n_rem >> 12 ) );// // final 4-bit reminder is CRC code 
+  sensorCoefficients[7] = crc_read; // restore the crc_read to its original place 
+  return ( n_rem ^ 0x00 ); // The calculated CRC should match what the device initally returned. 
+}
+
+// Use this method to send commands to the sensor.  Pretty much just used to read the pressure and temp data.
+unsigned long ms5803_cmd_adc(char cmd) {
+  unsigned int result = 0;
+  unsigned long returnedData = 0;
+  digitalWrite(sensorSelectPin, LOW);
+
+  SPI.transfer(SENSOR_CMD_ADC_CONV + cmd);
+  switch (cmd & 0x0f)
+  {
+  case SENSOR_CMD_ADC_256 : 
+    delay(1); 
+    break;
+  case SENSOR_CMD_ADC_512 : 
+    delay(3); 
+    break;
+  case SENSOR_CMD_ADC_1024: 
+    delay(4); 
+    break;
+  case SENSOR_CMD_ADC_2048: 
+    delay(6); 
+    break;
+  case SENSOR_CMD_ADC_4096: 
+    delay(10);  
+    break;
+  }
+  digitalWrite(sensorSelectPin, HIGH);
+  delay(3);
+  digitalWrite(sensorSelectPin, LOW);
+  SPI.transfer(SENSOR_CMD_ADC_READ);
+  returnedData = SPI.transfer(0x00);
+  result = 65536 * returnedData;
+  returnedData = SPI.transfer(0x00);
+  result = result + 256 * returnedData;
+  returnedData = SPI.transfer(0x00);
+  result = result + returnedData;
+  digitalWrite(sensorSelectPin, HIGH);
+  return result;
+}
+
+// *******************************************************************
+// ***************************** Log Book ****************************
+// *******************************************************************
+
+void drawLogBook() {
+
+  display.fillRect(0, 0, 128, 9, WHITE);
+
+  display.setTextColor(BLACK);
+  display.setTextSize(1);
+  display.setCursor(40, 1);
+  display.print("Log Book");
+
+  display.setTextColor(WHITE);
+  display.setCursor(0, 10);
+  display.print("Under construction");
+
+  drawButtonOptions("MENU", ">>", true, false);
+}
+
+void drawLogEntry(int position, DateTime date, int diveNumber) {
+
+}
+
+// *******************************************************************
+// ***************************** Settings ****************************
+// *******************************************************************
+
+void drawSettings() {
+  display.fillRect(0, 0, 128, 9, WHITE);
+
+  display.setTextColor(BLACK);
+  display.setTextSize(1);
+  display.setCursor(40, 1);
+  display.print("Settings");
+
+  display.setTextColor(WHITE);
+  display.setCursor(0, 10);
+  display.print("Under construction");
+
+  drawButtonOptions("MENU", ">>", true, false);
+}
+
+// ****************************************************************************
+//                                EEPROM Methods
+// ****************************************************************************
+
+void readPrefereces() {
+
+  int value           = EEPROM.read( 0 );
+  int value2          = EEPROM.read( 1 );
+
+  // if the values stored in locations 0 and 1 are not 170, then assume this is a first run. 
+  // Clear the EEPROM and store the 170s to indicate first run has happened. 
+  if (value != 170 || value2 != 170) {  // First run...
+
+    for (int i = 0; i < 2048; i++ ) { // The Teensy has 2K of EEPROM
+      EEPROM.write( i, 0 );
+    }
+
+    EEPROM.write( 0, 170 );
+    EEPROM.write( 1, 170 );
+
+    // Write the default preference.
+    writePreferences();
+  } 
+  else { // Not a first run...
+    // read preferences
+    time12Hour           = EEPROM.read( 2 ); // true = 12 hour time, false = 24 hour time.
+    clockBlink           = EEPROM.read( 3 ); // true = blink the colon, false = don't blink the colon.
+    ferinheight          = EEPROM.read( 4 ); // true = Ferinheight, false = Celsius.
+    meters               = EEPROM.read( 5 ); // true = meters, false = feet.
+    doubleAccentBelowRec = EEPROM.read( 6 ); // True = 60ft/min accent rate below recreational limits (130ft). 30ft/min otherwise.
+    recordInterval       = EEPROM.read( 7 ); // This is the inteval in which it will record data to the SD card in minutes.
+    profileInterval      = EEPROM.read( 8 ); // The interval that dive profile depths are recorded to EEPROM (for the graphing funtion).
+    playAccentTooFastTone = EEPROM.read( 9 );
+  }
+}
+
+void writePreferences() {
+  EEPROM.write( 2, time12Hour );
+  EEPROM.write( 3, clockBlink );
+  EEPROM.write( 4, ferinheight );
+  EEPROM.write( 5, meters );
+  EEPROM.write( 6, doubleAccentBelowRec );
+  EEPROM.write( 7, recordInterval );
+  EEPROM.write( 8, profileInterval );  
+  EEPROM.write( 9, playAccentTooFastTone );  
+}
+
+// ****************************************************************************
+//                            Dive Profile Methods
+// ****************************************************************************
+
+// TODO: Fix this so that it saves an integer (uint_16) not a byte (uint_8).  This will allow it to exceed 255 feet for those crazy enough to go that deep.
+void recordDiveProfileValue() {
+
+  if ( now.unixtime() > ( lastProfileRecord + profileInterval ) ) {
+
+    lastProfileRecord = now.unixtime();
+    byte profileDepth = depth;
+    int pointer = 2047 - profileSize + profilePointer; // Put the profile at the end of the EEPROM.
+    EEPROM.write( pointer, profileDepth );
+    profilePointer++;
+    profileSamples++;
+    if ( profilePointer > profileSize ) profilePointer = 0;
+    if ( profileSamples > profileSize ) profileSamples = profileSize;
+  }
+}
+
+void clearDiveProfile() {
+  byte profileDepth = 0;
+  int pointer = 0;
+  for (int x = 0; x < profileSize; x++) { 
+    pointer = ( 2047 - profileSize ) + x;
+    EEPROM.write( x, profileDepth );
+  }
+  profilePointer = 0;
+  profileSamples = 0;
+}
+
+// Graph has a fixed size of 100 pixels wide and 50 pixles high.
+void drawDiveProfileGraph(int x, int y) {
+
+  int maxRange = ( maxDepth / 10 ) + 1;
+  maxRange = maxRange * 10;
+  float multiplier = 50.0f / maxRange;
+  float yVal = 0.0f;
+  int yInt = 0;
+  int pointer = ( 2047 - profileSize ) + profilePointer - 1;
+  int storedValue = 0;
+  float storedFloat = 0.0f;
+
+  for ( int c = 0; c < profileSamples; c++ ) { 
+    storedValue = EEPROM.read( pointer );
+    storedFloat = storedValue;
+    yVal = ( storedFloat * multiplier ) * 1.0f;
+    yInt = yVal;
+    display.drawPixel( ( x + profileSize ) - c, yInt, WHITE);
+    pointer--;
+    if ( pointer < (2047 - profileSize) ) pointer = 2047;
+  }
+
+  display.setTextColor(WHITE);
+  display.setTextSize(1);
+  display.setCursor (x + 2, y + 43);
+  display.print(maxRange);
+
+  display.drawLine(x, y + 51, x + profileSize, y + 51, WHITE);
+  display.drawLine(x, y, x, y + 51, WHITE);
+
+}
+
+void cycleTone() {
+
+  noTone( speakerPin );
+    if ( !toneActive ) return;
+  int numberOfTones = accent_tone[ 0 ];
+
+  if ( toneCounter > numberOfTones ) {
+    toneCounter = 0; 
+    toneActive = false;
+    return;
+  }
+
+  toneCounter++;
+
+  if ( tonePlaying == 0 ) tone( speakerPin, accent_tone[ toneCounter ] );
+
+}
 
 
