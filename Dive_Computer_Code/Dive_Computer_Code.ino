@@ -121,7 +121,7 @@ static unsigned char PROGMEM up_arrow[] =
   B11111111 };
 
 static unsigned int accent_tone[] = { // Structure: # of tones then alterates freq and duration then a new record.
-  4, 800, 1000, 1200, 1400  
+  4, 1000, 1200, 1400, 1600  
 };
 
 #define OLED_RESET 3 // OLED Reset pin
@@ -309,6 +309,7 @@ void setup()   {
 
 void loop() {
 
+  cycleTone();
   // Fake values for debugging
   nitrogen++;
   oxygen++;
@@ -1595,10 +1596,12 @@ void drawDiveProfileGraph(int x, int y) {
 void cycleTone() {
 
   noTone( speakerPin );
-    if ( !toneActive ) return;
+  
+  if ( !toneActive ) return;
+  
   int numberOfTones = accent_tone[ 0 ];
 
-  if ( toneCounter > numberOfTones ) {
+  if ( toneCounter > numberOfTones - 1 ) {
     toneCounter = 0; 
     toneActive = false;
     return;
