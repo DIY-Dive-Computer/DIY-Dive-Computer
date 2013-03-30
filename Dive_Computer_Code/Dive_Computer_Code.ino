@@ -124,6 +124,11 @@ static unsigned int accent_tone[] = { // Structure: # of tones then alterates fr
   4, 1000, 1200, 1400, 1600  
 };
 
+static unsigned int descent_tone[] = { // Structure: # of tones then alterates freq and duration then a new record.
+  4, 1600, 1400, 1200, 1000  
+};
+
+
 #define OLED_RESET 3 // OLED Reset pin
 #define ACCENT_SAMPLES 10 // The number of samples saved for calculating accent rate. Larger number are more accurate but cause lag in the accent rate reading. 
 //#define SHOW_LAYOUT // Uncomment this to see bounding boxes on UI elements - makes laying out items easier.
