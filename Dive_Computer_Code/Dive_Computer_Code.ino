@@ -11,7 +11,7 @@
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 #include <SD.h>
-//#include "RTClib.h"
+#include "RTClib.h"
 #include <Time.h>
 #include "PITimer.h"
 #include <Bounce.h>
@@ -247,7 +247,7 @@ void setup()   {
   display.setTextColor( WHITE );
 
   // Make sure the real time clock is set correctly and set some inital parameters
-  //Teensy3Clock.set( DateTime( __DATE__, __TIME__ ).unixtime() ); // comment out if there is a backup battery connected to the real time clock.
+  Teensy3Clock.set( DateTime( __DATE__, __TIME__ ).unixtime() ); // comment out if there is a backup battery connected to the real time clock.
   currentTime = Teensy3Clock.get();
   lastDataRecord = Teensy3Clock.get();
   lastColonStateChange = lastDataRecord;
