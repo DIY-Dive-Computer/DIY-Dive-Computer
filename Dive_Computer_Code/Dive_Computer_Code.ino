@@ -11,7 +11,7 @@
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 #include <SD.h>
-//#include "RTClib.h"
+#include "RTClib.h"
 #include <Time.h>
 #include "PITimer.h"
 #include <Bounce.h>
@@ -193,7 +193,7 @@ const int         accentSamples            = 10;    // Number of depth samples t
 boolean           safetyStopNeeded         = false; // Goes true when the user's depth surpasses requireSafetyStopAfter.
 boolean           safetyStop               = false; // When true the safety stop screen is shown.
 uint32_t          safetyStopTime           = 0;     // Stores the time the safety stop started.
-String            currentDataFile          = "";    // This is the name of the current data file.
+char              currentDataFile[]        = "00000000.txt"; // This is the name of the current data file.
 
 // **************************************** Dive parameter storage *****
 boolean           diveMode                 = false; // Stores dive mode or surface mode state: 0 = surface mode, 1 = dive mode.
@@ -216,7 +216,7 @@ boolean           clockBlink               = true;  // true = blink the colon, f
 boolean           ferinheight              = true;  // true = Ferinheight, false = Celsius.
 boolean           meters                   = false; // true = meters, false = feet.
 boolean           doubleAccentBelowRec     = true;  // True = 60ft/min accent rate below recreational limits (130ft). 30ft/min otherwise.
-int               recordInterval           = 15;    // This is the inteval in which it will record data to the SD card in minutes.
+int               recordInterval           = 10;    // This is the inteval in which it will record data to the SD card in minutes.
 int               profileInterval          = 0;     // The interval that dive profile depths are recorded to EEPROM (for the graphing funtion). 
 boolean           playAccentTooFastTone    = true;  // If this is true, then the accent too fast tone will play.
 float             requireSafetyStopAfter   = 30.0;  // The depth the user needs to pass for the safety stop to be enabled;
@@ -245,13 +245,6 @@ void setup()   {
   display.clearDisplay();
   display.display(); 
   display.setTextColor( WHITE );
-
-  // Make sure the real time clock is set correctly and set some inital parameters
-  //Teensy3Clock.set( DateTime( __DATE__, __TIME__ ).unixtime() ); // comment out if there is a backup battery connected to the real time clock.
-  currentTime = Teensy3Clock.get();
-  lastDataRecord = Teensy3Clock.get();
-  lastColonStateChange = lastDataRecord;
-  diveStart = now();
 
   // Set up the warning LED Pin
   pinMode( alertLEDPin, OUTPUT ); // Warning LED
@@ -321,6 +314,14 @@ void setup()   {
 
   // Give everything a half sec to settle
   delay( 500 );
+
+  // Make sure the real time clock is set correctly and set some inital parameters
+  Teensy3Clock.set( 0 );//DateTime( __DATE__, __TIME__ ).unixtime() ); // comment out if there is a backup battery connected to the real time clock.
+  currentTime = Teensy3Clock.get();
+  lastDataRecord = currentTime;
+  lastColonStateChange = currentTime;
+  diveStart = currentTime;
+
 }
 
 // ****************************************************************************
@@ -438,8 +439,11 @@ void loop() {
     diveMode = false;
     safetyStopNeeded = false;
     safetyStop = false;
-
   }
+  Serial.print("Depth = ");
+  Serial.print(depth);
+    Serial.print(" diveMode = ");
+  Serial.println(diveMode);
 
   // Things to do when in dive mode.
   if ( diveMode ) {
@@ -647,21 +651,52 @@ void drawDiveDisplayD() {
 //                                  Record Data
 // ****************************************************************************
 
-void setupNewDataFile() {
-  
-  currentDataFile = months[ month() ];
-  currentDataFile += String( " " );
-  currentDataFile += String( day() );
-  currentDataFile += String( ", " );
-  currentDataFile += String( year() );
-  currentDataFile += String( " Dive #" );
-  
+void createFileName( int diveNumber ) {
+
+  int currentYear = year();
+  if (currentYear < 2000) currentYear = 2013; // If the clock is not set, then use 2013.
+ 
+  currentDataFile[0] = (currentYear - 2000 ) / 10 + '0'; // File name format: YYMMDD##.txt
+  currentDataFile[1] = currentYear % 10 + '0';
+  currentDataFile[2] = month() / 10 + '0';
+  currentDataFile[3] = month() % 10 + '0';
+  currentDataFile[4] = day() / 10 + '0';
+  currentDataFile[5] = day() % 10 + '0';
+  currentDataFile[6] = diveNumber / 10;
+  currentDataFile[7] = diveNumber % 10;
+  //    currentDataFile[8] = '.';
+  //    currentDataFile[9] = 't';
+  //    currentDataFile[10] = 'x';
+  //    currentDataFile[11] = 't';
+
+  // Debug
   Serial.println( currentDataFile );
+}
+
+void setupNewDataFile() {
+
+  int diveNumber = 1;
+
+  createFileName( diveNumber );
+
+//  for ( int x = 0; x < nameLength; x++ ) {
+//    fileName[x] = currentDataFile[x];
+//  }
+
+  while ( SD.exists( currentDataFile ) ) {
+    diveNumber++;
+    createFileName( diveNumber );
+  }
 
 }
 
 void logData() {
   //  ************* Data logging code *************
+//Serial.print("lastDataRecord = ");
+//Serial.println(lastDataRecord);
+//
+//Serial.print("now = ");
+//Serial.println(now());
 
   if ( now() > ( lastDataRecord + recordInterval ) ) {
 
@@ -671,7 +706,7 @@ void logData() {
 
     // open the file. note that only one file can be open at a time,
     // so you have to close this one before opening another.
-    File dataFile = SD.open( "datalog.txt", FILE_WRITE );
+    File dataFile = SD.open( currentDataFile, FILE_WRITE );
 
     // if the file is available, write to it:
     if ( dataFile ) {
@@ -833,13 +868,16 @@ void drawClock( int x, int y, int headingGap, int size, boolean bold ) {
 }
 
 String createTimeString(boolean amPm) {
-  String timeString;
 
+  String timeString;
   int hours = hour();
 
   if ( time12Hour ) {
     if ( hour() > 12 ) {
       hours -= 12;
+    }
+    if (hours == 0) {
+      hours = 12;
     }
   }
 
@@ -1674,8 +1712,10 @@ void drawSafetyStopScreen() {
 }
 
 // ****************************************************************************
-//                            Safety Stop Methods
+//                             Methods
 // ****************************************************************************
+
+
 
 
 
