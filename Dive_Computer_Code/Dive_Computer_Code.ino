@@ -129,6 +129,7 @@ static unsigned int trill_tone[] = { // Structure: # of tones then frequencies
   4, 1000, 1400, 1000, 1400  
 };
 
+
 //#define SHOW_LAYOUT // Uncomment this to see bounding boxes on UI elements - makes laying out items easier.
 
 // **************************************** Sensor Parameters *****
@@ -194,7 +195,7 @@ boolean           safetyStopNeeded         = false; // Goes true when the user's
 boolean           safetyStop               = false; // When true the safety stop screen is shown.
 uint32_t          safetyStopTime           = 0;     // Stores the time the safety stop started.
 String            currentDataFile          = "";    // This is the name of the current data file.
-
+//char              currentDataFile[]        = "00000000.txt"; // This is the name of the current data file.
 // **************************************** Dive parameter storage *****
 boolean           diveMode                 = false; // Stores dive mode or surface mode state: 0 = surface mode, 1 = dive mode.
 uint32_t          diveStart                = 0;     // This stores the dive start time in unixtime.
@@ -247,11 +248,11 @@ void setup()   {
   display.setTextColor( WHITE );
 
   // Make sure the real time clock is set correctly and set some inital parameters
-  Teensy3Clock.set( DateTime( __DATE__, __TIME__ ).unixtime() ); // comment out if there is a backup battery connected to the real time clock.
+  Teensy3Clock.set( 0 );// DateTime( __DATE__, __TIME__ ).unixtime() ); // comment out if there is a backup battery connected to the real time clock.
   currentTime = Teensy3Clock.get();
-  lastDataRecord = Teensy3Clock.get();
-  lastColonStateChange = lastDataRecord;
-  diveStart = now();
+  lastDataRecord = currentTime;
+  lastColonStateChange = currentTime;
+  diveStart = currentTime;
 
   // Set up the warning LED Pin
   pinMode( alertLEDPin, OUTPUT ); // Warning LED
@@ -647,17 +648,35 @@ void drawDiveDisplayD() {
 //                                  Record Data
 // ****************************************************************************
 
-void setupNewDataFile() {
-  
-  currentDataFile = months[ month() ];
-  currentDataFile += String( " " );
-  currentDataFile += String( day() );
-  currentDataFile += String( ", " );
-  currentDataFile += String( year() );
-  currentDataFile += String( " Dive #" );
-  
+void createFileName(int diveNumber) {
+
+  int currentYear = year();
+  if (currentYear < 2000) currentYear = 2013; // If the clock is not set, then use 2013.
+ 
+  currentDataFile[0] = (currentYear - 2000 ) / 10 + '0'; // File name format: YYMMDD##.txt
+  currentDataFile[1] = currentYear % 10 + '0';
+  currentDataFile[2] = month() / 10 + '0';
+  currentDataFile[3] = month() % 10 + '0';
+  currentDataFile[4] = day() / 10 + '0';
+  currentDataFile[5] = day() % 10 + '0';
+  currentDataFile[6] = diveNumber / 10;
+  currentDataFile[7] = diveNumber % 10;
+
+
   Serial.println( currentDataFile );
 
+}
+
+void setupNewDataFile() {
+
+  int diveNumber = 1;
+
+  //createFileName( diveNumber );
+
+//  while ( SD.exists( currentDataFile ) ) {
+//    diveNumber++;
+//    //createFileName( diveNumber );
+//  }
 }
 
 void logData() {
@@ -671,7 +690,7 @@ void logData() {
 
     // open the file. note that only one file can be open at a time,
     // so you have to close this one before opening another.
-    File dataFile = SD.open( "datalog.txt", FILE_WRITE );
+    File dataFile = SD.open( "Datafile.txt", FILE_WRITE );
 
     // if the file is available, write to it:
     if ( dataFile ) {
@@ -840,6 +859,9 @@ String createTimeString(boolean amPm) {
   if ( time12Hour ) {
     if ( hour() > 12 ) {
       hours -= 12;
+    }
+    if (hours == 0) {
+      hours = 12;
     }
   }
 
@@ -1481,11 +1503,7 @@ void drawLogEntry(int y, int listPosition, unsigned long date, int diveNumber) {
   display.setTextSize( 1 );
   display.setCursor( 0, y + ( 9 * listPosition ) );
   display.print( text );
-
-
 }
-
-
 
 // ****************************************************************************
 //                                    Settings
@@ -1676,6 +1694,7 @@ void drawSafetyStopScreen() {
 // ****************************************************************************
 //                            Safety Stop Methods
 // ****************************************************************************
+
 
 
 
