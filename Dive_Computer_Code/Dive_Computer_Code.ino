@@ -1,4 +1,4 @@
-/******************************************************************
+m/******************************************************************
  * This is the Teensy 3.0 code for the DIY Dive Computer. 
  * 
  * Written by Victor Konshin.
@@ -6,17 +6,30 @@
  * All text above must be included in any redistribution.
  ******************************************************************/
 
+#define DISPLAY_ADAFRUIT_SSD1306 // 1.3" Monochrome OLED
+//#define DISPLAY_ADAFRUIT_ST7735 // 1.8" Color LCD
+
 #include <Wire.h>
 #include <EEPROM.h>
 #include <Adafruit_GFX.h>
+
+#ifdef DISPLAY_ADAFRUIT_SSD1306 // 1.3" Monochrome OLED
 #include <Adafruit_SSD1306.h>
+#endif
+
+#ifdef DISPLAY_ADAFRUIT_ST7735// 1.8" Color LCD
+#include <Adafruit_ST7735.h> 
+#endif 
+
 #include <SD.h>
 #include "RTClib.h"
 #include <Time.h>
 #include "PITimer.h"
 #include <Bounce.h>
 #include <SPI.h>
+#include <diydc_MS5803.h>
 //#include "UILibrary.h"
+
 
 // Sensor constants:
 #define SENSOR_CMD_RESET      0x1E
@@ -118,8 +131,8 @@ static unsigned char PROGMEM up_arrow[] =
   B01111110, 
   B11111111 };
 
-static String PROGMEM months[] = {
-  "???", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
+//static String PROGMEM months[] = {
+//  "???", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
 
 static unsigned int accent_tone[] = { // Structure: # of tones then frequencies
   4, 1000, 1200, 1400, 1600  
@@ -128,6 +141,16 @@ static unsigned int accent_tone[] = { // Structure: # of tones then frequencies
 static unsigned int trill_tone[] = { // Structure: # of tones then frequencies
   4, 1000, 1400, 1000, 1400  
 };
+
+#ifdef DISPLAY_ADAFRUIT_SSD1306 // 1.3" Monochrome OLED
+#define DISPLAY_WIDTH 128
+#define DISPLAY_HEIGHT 64
+#endif
+
+#ifdef DISPLAY_ADAFRUIT_ST7735// 1.8" Color LCD
+#define DISPLAY_WIDTH 160
+#define DISPLAY_HEIGHT 128
+#endif
 
 
 //#define SHOW_LAYOUT // Uncomment this to see bounding boxes on UI elements - makes laying out items easier.
@@ -143,13 +166,16 @@ float             sensorOffset             = 0;
 float             sensitivity              = 0;
 
 // **************************************** Hardware Parameters *****
-const int         button1Pin               = 0;     // Pin for the right button.
-const int         button2Pin               = 1;     // Pin for the left button.
-const int         button3Pin               = 2;     // Pin for a third button - the inital design will not use it but I will have parts on the board to support it.
-const int         button4Pin               = 3;     // Pin for a fourth button - the inital design will not use it but I will have parts on the board to support it.
-const int         oledReset                = 4;     // Pin for the OLED reset.
-const int         alertLEDPin              = 5;     // A blinking LED is attached to this pin.
-const int         chargingPin              = 6;     // Pin for receiving the charging signal from the charging circuit.
+const int         button1Pin               = 2;     // Pin for the select button.
+const int         button2Pin               = 14;    // Pin for the left button.
+const int         button3Pin               = 15;    // Pin for the right button.
+const int         button4Pin               = 3;     // Pin for a fourth button - the inital design will not use it but I will have parts on the board to support it if a use comes up.
+const int         displayReset             = 4;     // Pin for the display reset.
+const int         lcdCD                    = 5;     // Pin for the LCD data/command.
+
+const int         alertLEDPin              = 6;     // A blinking LED is attached to this pin.
+const int         chargingPin              = 7;     // Pin for receiving the charging signal from the charging circuit.
+const int         lcdSelectPin             = 8;     // Device select pin for the 1.8" LCD display
 const int         sensorSelectPin          = 9;     // Sensor device select
 const int         sdChipSelect             = 10;    // For the SD card breakout board
 
@@ -164,8 +190,8 @@ SdVolume          volume;
 SdFile            root;
 
 // **************************************** System Parameters *****
-Adafruit_SSD1306  display(oledReset);               // Allocate for the OLED
-unsigned long     currentTime              = 0;     // Stores the current date/time for use throughout the code.
+
+DateTime          currentTime              = 0;     // Stores the current date/time for use throughout the code.
 int               batteryLevel             = 128;   // Current battery capacity remaining.
 int               displayMode              = 0;     // Stores the current display mode: 0 = menu, 1 = dive, 2 = log, 3 = settings. 
 int               currentMenuOption        = 0;     // Stores which menu option is being displayed. 0 = dive, 1 = log, 2 = settings.
@@ -196,6 +222,16 @@ boolean           safetyStop               = false; // When true the safety stop
 uint32_t          safetyStopTime           = 0;     // Stores the time the safety stop started.
 String            currentDataFile          = "";    // This is the name of the current data file.
 //char              currentDataFile[]        = "00000000.txt"; // This is the name of the current data file.
+
+#ifdef DISPLAY_ADAFRUIT_SSD1306 // 1.3" Monochrome OLED
+Adafruit_SSD1306  display(displayReset);              
+#endif
+
+#ifdef DISPLAY_ADAFRUIT_ST7735// 1.8" Color LCD
+Adafruit_ST7735 display = Adafruit_ST7735(lcdSelectPin, lcdCD, displayReset);
+#endif
+
+
 // **************************************** Dive parameter storage *****
 boolean           diveMode                 = false; // Stores dive mode or surface mode state: 0 = surface mode, 1 = dive mode.
 uint32_t          diveStart                = 0;     // This stores the dive start time in unixtime.
@@ -223,7 +259,12 @@ boolean           playAccentTooFastTone    = true;  // If this is true, then the
 float             requireSafetyStopAfter   = 30.0;  // The depth the user needs to pass for the safety stop to be enabled;
 int               safetyStopLength         = 180;   // Length of the standard safety stop.
 
-// ***************************************************************
+// ****************************************** Debouncers ****
+
+Bounce selectBounce   = Bounce( button1Pin, 5 ); 
+Bounce leftBounce     = Bounce( button2Pin, 5 ); 
+Bounce rightBounce    = Bounce( button3Pin, 5 ); 
+Bounce button4Bounce  = Bounce( button4Pin, 5 ); 
 
 
 // ****************************************************************************
@@ -240,19 +281,44 @@ void setup()   {
   Wire.begin();
 
   // Display Setup
+#ifdef DISPLAY_ADAFRUIT_SSD1306 // 1.3" Monochrome OLED
   display.begin( SSD1306_SWITCHCAPVCC, 0x3D );  // initialize with the I2C addr 0x3D
   display.display(); // show splashscreen
   delay( 1000 );
   display.clearDisplay();
   display.display(); 
+#endif
+
+#ifdef DISPLAY_ADAFRUIT_ST7735 // 1.8" Color LCD
+  // Adafruit's supplier changed the 1.8" display slightly after Jan 10, 2012
+  // so that the alignment of the TFT had to be shifted by a few pixels
+  // this just means the init code is slightly different. Check the
+  // color of the tab to see which init code to try. If the display is
+  // cut off or has extra 'random' pixels on the top & left, try the
+  // other option!
+  // If you are seeing red and green color inversion, use Black Tab
+
+  // If your TFT's plastic wrap has a Black Tab, use the following:
+  //tft.initR(INITR_BLACKTAB);   // initialize a ST7735S chip, black tab
+  // If your TFT's plastic wrap has a Red Tab, use the following:
+  display.initR(INITR_REDTAB);   // initialize a ST7735R chip, red tab
+  // If your TFT's plastic wrap has a Green Tab, use the following:
+  //tft.initR(INITR_GREENTAB); // initialize a ST7735R chip, green tab
+
+  display.setRotation(3);
+
+  display.fillScreen(ST7735_BLACK);
+
+#endif
+
   display.setTextColor( WHITE );
 
   // Make sure the real time clock is set correctly and set some inital parameters
-  Teensy3Clock.set( 0 );// DateTime( __DATE__, __TIME__ ).unixtime() ); // comment out if there is a backup battery connected to the real time clock.
+  Teensy3Clock.set( DateTime( __DATE__, __TIME__ ).unixtime() ); // comment out if there is a backup battery connected to the real time clock.
   currentTime = Teensy3Clock.get();
-  lastDataRecord = currentTime;
-  lastColonStateChange = currentTime;
-  diveStart = currentTime;
+  lastDataRecord = currentTime.unixtime();
+  lastColonStateChange = currentTime.unixtime();
+  diveStart = currentTime.unixtime();
 
   // Set up the warning LED Pin
   pinMode( alertLEDPin, OUTPUT ); // Warning LED
@@ -292,10 +358,14 @@ void setup()   {
   }
 
   //  Setup the user input buttons.
-  pinMode( button1Pin, INPUT_PULLUP ); // right button
-  pinMode( button2Pin, INPUT_PULLUP ); // left button
-  attachInterrupt( button1Pin, rightPressed, FALLING );
-  attachInterrupt( button2Pin, leftPressed, FALLING );
+  pinMode( button1Pin, INPUT ); // select button
+  pinMode( button2Pin, INPUT ); // left button
+  pinMode( button3Pin, INPUT ); // right button
+  pinMode( button4Pin, INPUT ); // button 4
+
+  //  attachInterrupt( button1Pin, selectPressed, FALLING ); //  Trying the "bounce" library
+  //  attachInterrupt( button2Pin, leftPressed, FALLING );
+  //  attachInterrupt( button3Pin, rightPressed, FALLING );
 
   // Wake up pin is also the "in water" pin
   pinMode( wakeUpPin, INPUT );   
@@ -344,10 +414,36 @@ void loop() {
   // Read real time clock.
   currentTime = Teensy3Clock.get();
 
+  // Update the debouncers
+  selectBounce.update();
+  leftBounce.update();
+  rightBounce.update();
+  button4Bounce.update();
+
+  // Get the update values on button states
+  int selectState   = selectBounce.read();
+  int leftState     = leftBounce.read();
+  int rightState    = rightBounce.read();
+  int button4State  = button4Bounce.read();
+
+  // Handle button presses
+    if ( leftState == HIGH ) {
+    leftPressed();
+  }
+  if ( selectState == HIGH ) {
+    selectPressed();
+  }
+  if ( rightState == HIGH ) {
+    rightPressed();
+  }
+  if ( button4State == HIGH ) {
+    button4Pressed();
+  }
+
   // Read temp and pressure from the sensor
   // TODO: Consider reducing the read frequency to reduce power consumption however, I do not think the sensor uses much power.
-  D1 = ms5803_cmd_adc( SENSOR_CMD_ADC_D1 + SENSOR_CMD_ADC_4096);    // read uncompensated pressure
-  D2 = ms5803_cmd_adc( SENSOR_CMD_ADC_D2 + SENSOR_CMD_ADC_4096);    // read uncompensated temperature
+  D1 = ms5803_cmd_adc( SENSOR_CMD_ADC_D1 + SENSOR_CMD_ADC_4096 );    // read uncompensated pressure
+  D2 = ms5803_cmd_adc( SENSOR_CMD_ADC_D2 + SENSOR_CMD_ADC_4096 );    // read uncompensated temperature
   // calculate 1st order pressure and temperature correction factors (MS5803 1st order algorithm)
   deltaTemp = D2 - sensorCoefficients[5] * pow( 2, 8 );
   sensorOffset = sensorCoefficients[2] * pow( 2, 16 ) + ( deltaTemp * sensorCoefficients[4] ) / pow( 2, 7 );
@@ -458,7 +554,15 @@ void loop() {
   // TODO: The way this is currently written, the display is constantly being updated. This is not efficient. 
   // TODO: Need to change this so only areas of the screen that need updating are updated.  This will likely improve battery performance. 
   if ( !alertShowing ) {
+
+#ifdef DISPLAY_ADAFRUIT_SSD1306 // 1.3" Monochrome OLED
     display.clearDisplay();
+#endif
+
+#ifdef DISPLAY_ADAFRUIT_ST7735// 1.8" Color LCD
+    // display.fillScreen(ST7735_BLACK);
+#endif
+
     display.setTextColor( WHITE );
 
     // 0 = menu, 1 = dive, 2 = log, 3 = settings
@@ -491,7 +595,9 @@ void loop() {
     else if ( displayMode == 3 ) { // Settings Display
       drawSettings();
     }
+#ifdef DISPLAY_ADAFRUIT_SSD1306
     display.display();
+#endif
   }
 }
 
@@ -544,13 +650,6 @@ void drawMenu() {
 
 void rightPressed() {
 
-  // TODO: Replace debounce code with Debounce library since it provides more functionality.
-  if ( ( millis() - rLastDebounceTime ) < debounceDelay ) {
-    return;
-  }
-
-  rLastDebounceTime = millis();
-
   if ( alertShowing ) {
     killAlert();
     return;
@@ -567,14 +666,23 @@ void rightPressed() {
 }
 
 void leftPressed() {
-
-  // TODO: Replace debounce code with Debounce library since it provides more functionality.
-
-  if ( ( millis() - lLastDebounceTime ) < debounceDelay ) {
+    if ( alertShowing ) {
+    killAlert();
     return;
   }
+  if ( displayMode == 0 ) { // Menu
+    currentMenuOption --;
+    if ( currentMenuOption < 0 ) currentMenuOption = 2;
+  }
 
-  lLastDebounceTime = millis();
+  if ( displayMode == 1 ) { // Dive
+    diveModeDisplay--;
+    if ( diveModeDisplay < 0 ) diveModeDisplay = numberOfDiveDisplays;
+  }
+
+}
+
+void selectPressed() {
 
   if ( displayMode == 0 ) { // Menu
     displayMode = currentMenuOption + 1;
@@ -596,6 +704,10 @@ void leftPressed() {
     writePreferences(); // save the preferences to the EEPROM
     return;
   }
+}
+
+void button4Pressed() {
+  // Put button 4 functionality here.
 }
 
 // ****************************************************************************
@@ -652,7 +764,7 @@ void createFileName(int diveNumber) {
 
   int currentYear = year();
   if (currentYear < 2000) currentYear = 2013; // If the clock is not set, then use 2013.
- 
+
   currentDataFile[0] = (currentYear - 2000 ) / 10 + '0'; // File name format: YYMMDD##.txt
   currentDataFile[1] = currentYear % 10 + '0';
   currentDataFile[2] = month() / 10 + '0';
@@ -673,10 +785,10 @@ void setupNewDataFile() {
 
   //createFileName( diveNumber );
 
-//  while ( SD.exists( currentDataFile ) ) {
-//    diveNumber++;
-//    //createFileName( diveNumber );
-//  }
+  //  while ( SD.exists( currentDataFile ) ) {
+  //    diveNumber++;
+  //    //createFileName( diveNumber );
+  //  }
 }
 
 void logData() {
@@ -720,25 +832,25 @@ void drawButtonOptions( String left, String right, boolean showTimeTemp, boolean
   int leftWidth = ( left.length() * 6 ) - 1;
   int rightWidth = ( right.length() * 6 ) - 1;
 
-  display.fillRect( 0, 55, leftWidth + 2, 9, WHITE );
+  display.fillRect( 0, DISPLAY_HEIGHT - 9, leftWidth + 2, 9, WHITE );
   display.setTextColor( BLACK );
-  display.setCursor( 1, 56 );
+  display.setCursor( 1, DISPLAY_HEIGHT - 8 );
   display.setTextSize( 1 );
-  display.println( left );
+  display.print( left );
 
-  display.fillRect( 128 - ( rightWidth + 2 ), 55, rightWidth + 2, 9, WHITE );
+  display.fillRect( DISPLAY_WIDTH - ( rightWidth + 2 ), DISPLAY_HEIGHT - 9, rightWidth + 2, 9, WHITE );
   display.setTextColor( BLACK );
-  display.setCursor( 128 - ( rightWidth + 1 ), 56 );
+  display.setCursor( DISPLAY_WIDTH - ( rightWidth + 1 ), DISPLAY_HEIGHT - 8 );
   display.setTextSize( 1 );
-  display.println( right );
+  display.print( right );
 
   // (leftWidth + rightWidth + 4);
   if ( showTimeTemp ) {
-    drawTimeTempBar( leftWidth + 3, 55, 128 - ( ( leftWidth + 3 ) + ( rightWidth + 3 ) ) , showBattery );
+    drawTimeTempBar( leftWidth + 3, DISPLAY_HEIGHT - 9, DISPLAY_WIDTH - ( ( leftWidth + 3 ) + ( rightWidth + 3 ) ) , showBattery );
   } 
   else if ( showBattery ) {
     // TODO: This this appropiately dynamic.
-    drawBattery( 54, 56, 20, false ); // if color = false, battey is white, true = black battery.
+    drawBattery( 54, DISPLAY_HEIGHT - 8, 20, false ); // if color = false, battey is white, true = black battery.
   }
 }
 
@@ -854,10 +966,10 @@ void drawClock( int x, int y, int headingGap, int size, boolean bold ) {
 String createTimeString(boolean amPm) {
   String timeString;
 
-  int hours = hour();
+  int hours = currentTime.hour();
 
   if ( time12Hour ) {
-    if ( hour() > 12 ) {
+    if ( currentTime.hour() > 12 ) {
       hours -= 12;
     }
     if (hours == 0) {
@@ -885,7 +997,7 @@ String createTimeString(boolean amPm) {
     timeString = String( timeString + ' ' );
   }
 
-  int minutes = minute();
+  int minutes = currentTime.minute();
 
   if ( minutes < 10 ) {
     timeString = String( timeString + '0' );
@@ -895,7 +1007,7 @@ String createTimeString(boolean amPm) {
   timeString = String( timeString + minutes );
 
   if ( time12Hour ) {
-    if ( hour() > 11 ) {
+    if ( currentTime.hour() > 11 ) {
       timeString = String( timeString + "PM" );
     } 
     else {
@@ -1081,7 +1193,9 @@ void drawDepth(int value, int x, int y, int headingGap, int size, boolean bold, 
 // ****************************************************************************
 
 void calculateAccentRate() {
-
+  // TODO: There will be a problem at 70 minutes after the device is powered on.  The Micros() value will exceed the 
+  // capacity of an unsigned long and will roll over. This will cause this algorithm to show an incorrect accent rate 
+  // but only when pre-wrap values are in the buffer (about 1 second). 
   int           samples     = accentSamples;
   int           pointer     = depthsPointer;
   unsigned long totalTime   = 0;
@@ -1290,8 +1404,16 @@ void showAlert(int time, String message) { // time = 0 will ask the user to dism
   if ( !alertShowing ) {
     alertShowing = true;
     alertTime = now();
+
+#ifdef DISPLAY_ADAFRUIT_SSD1306 // 1.3" Monochrome OLED
     display.clearDisplay();
     display.display();
+#endif
+
+#ifdef DISPLAY_ADAFRUIT_ST7735// 1.8" Color LCD
+    display.fillScreen(ST7735_BLACK);
+#endif
+
     digitalWrite( alertLEDPin, LOW );
 
     display.setTextColor( WHITE );
@@ -1322,7 +1444,9 @@ void showAlert(int time, String message) { // time = 0 will ask the user to dism
       display.setTextSize( 2 );
       display.println( "ALERT:" );
     } 
+#ifdef DISPLAY_ADAFRUIT_SSD1306
     display.display();
+#endif
   }
 
   PITimer1.period( 1 );
@@ -1339,8 +1463,14 @@ void killAlert() {
   digitalWrite( alertLEDPin, HIGH );
   PITimer1.stop();
   PITimer2.stop();
+#ifdef DISPLAY_ADAFRUIT_SSD1306 // 1.3" Monochrome OLED
   display.clearDisplay();
   display.display();
+#endif
+
+#ifdef DISPLAY_ADAFRUIT_ST7735// 1.8" Color LCD
+  display.fillScreen(ST7735_BLACK);
+#endif
 }
 
 
@@ -1365,7 +1495,9 @@ void blinkAlert() {
     display.setTextSize( 2 );
     display.println( "ALERT:" );
   }
+#ifdef DISPLAY_ADAFRUIT_SSD1306
   display.display();
+#endif
 }
 
 // ****************************************************************************
@@ -1495,7 +1627,7 @@ void drawLogBook() {
   drawButtonOptions("^^", ">>", true, true);
 }
 
-void drawLogEntry(int y, int listPosition, unsigned long date, int diveNumber) { // Parameters: y is the very top of the list, listPosition is where the line will be drawn relative to y, date is the date/time of the entry and diveNumber is the # for that date.
+void drawLogEntry(int y, int listPosition, DateTime date, int diveNumber) { // Parameters: y is the very top of the list, listPosition is where the line will be drawn relative to y, date is the date/time of the entry and diveNumber is the # for that date.
 
   String text = String( "Mar 28, 2013 Dive #" ); // 20 characters
   text += String( diveNumber + 1 );
@@ -1675,7 +1807,7 @@ void drawSafetyStopScreen() {
     barColorValue = WHITE;
   }
 
-  display.fillRect( 0, 0, 128, 9, barColorValue );
+  display.fillRect( 6, 0, 116, 9, barColorValue );
   display.setTextColor( textColorValue );
   display.setCursor( 31, 1 );
   display.setTextSize( 1 );
@@ -1694,6 +1826,12 @@ void drawSafetyStopScreen() {
 // ****************************************************************************
 //                            Safety Stop Methods
 // ****************************************************************************
+
+
+
+
+
+
 
 
 
